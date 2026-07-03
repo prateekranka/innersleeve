@@ -1,0 +1,19 @@
+.DS_Store
+.omo/
+build-logs/
+
+# Xcode local state
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager local state
+.build/
+.swiftpm/
+
+# Archives and exported apps
+*.xcarchive
+*.ipa
+*.dSYM

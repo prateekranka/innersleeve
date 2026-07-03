@@ -1,0 +1,26 @@
+{
+  "id": "11111111-2222-3333-4444-555555555555",
+  "title": "Fixture Nights",
+  "date": "1987-04-12",
+  "country": "US",
+  "barcode": "123456789012",
+  "artist-credit": [
+    { "name": "Test Artist" }
+  ],
+  "label-info": [
+    {
+      "catalog-number": "FIX-001",
+      "label": { "name": "Fixture Records" }
+    }
+  ],
+  "media": [
+    {
+      "format": "12\" Vinyl",
+      "tracks": [
+        { "position": "A1", "title": "First Fixture", "length": 184000 },
+        { "position": "A2", "title": "Second Fixture", "length": 201000 },
+        { "position": "B1", "title": "Third Fixture", "length": 242000 }
+      ]
+    }
+  ]
+}
