@@ -374,6 +374,7 @@ extension Record {
     func applyRefetchedArtwork(_ data: Data, sourceURL: URL) {
         coverImageData = data
         coverArtSourceURL = sourceURL.absoluteString
+        hasCoverArt = true
     }
 
     /// Shelf order: alphabetical by artist, then title — like a real crate.

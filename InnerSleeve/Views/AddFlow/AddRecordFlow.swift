@@ -116,8 +116,7 @@ struct AddRecordFlow: View {
     private func loadCover(for record: Record, url: URL?) async {
         guard let url else { return }
         if let data = try? await CoverArtLoader().loadData(from: url) {
-            record.coverImageData = data
-            record.coverArtSourceURL = url.absoluteString
+            record.applyRefetchedArtwork(data, sourceURL: url)
             try? modelContext.save()
         }
     }
@@ -161,6 +160,11 @@ extension Record {
     }
 
     func apply(_ draft: RecordDraft) {
+        // A different artist/title means any previous Apple Music match is
+        // for the wrong album; drop it so the deck re-searches on next play.
+        if draft.artist != artist || draft.title != title {
+            appleMusicAlbumID = nil
+        }
         artist = draft.artist
         title = draft.title
         releaseYear = draft.releaseYear

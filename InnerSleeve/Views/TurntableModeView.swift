@@ -107,7 +107,13 @@ struct TurntableModeView: View {
                 appleMusicStatusControl
             }
         }
-        .onAppear { position = Double(selection) }
+        .onAppear {
+            position = Double(selection)
+            // The deck view is recreated on every mode switch, so the
+            // target must be applied on appear — onChange alone never
+            // fires for the value the view was created with.
+            snapToDeckTarget()
+        }
         .onChange(of: deckTarget?.persistentModelID) { _, _ in
             snapToDeckTarget()
         }
@@ -120,6 +126,10 @@ struct TurntableModeView: View {
     private func snapToDeckTarget() {
         guard let targetID = deckTarget?.persistentModelID,
               let index = records.firstIndex(where: { $0.persistentModelID == targetID }) else {
+            return
+        }
+        guard index != selection else {
+            position = Double(index)
             return
         }
         snap(to: index)

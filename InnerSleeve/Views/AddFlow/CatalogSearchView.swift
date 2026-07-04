@@ -40,6 +40,7 @@ struct CatalogSearchView: View {
         guard trimmed.count >= 3 else {
             results = []
             errorText = nil
+            isLoading = false
             return
         }
         try? await Task.sleep(for: .milliseconds(350))
@@ -47,8 +48,13 @@ struct CatalogSearchView: View {
         isLoading = true
         errorText = nil
         do {
-            results = try await settings.makeLookupService().search(text: trimmed)
+            let found = try await settings.makeLookupService().search(text: trimmed)
+            guard !Task.isCancelled else { return }
+            results = found
         } catch {
+            // A superseded keystroke's request fails with a cancellation
+            // error; it must not clobber the newer search's state.
+            guard !Task.isCancelled else { return }
             results = []
             errorText = (error as? LocalizedError)?.errorDescription ?? "Catalog lookup failed. Manual entry is still available."
         }
@@ -123,7 +129,7 @@ private struct CandidateArtwork: View {
 
     private var fallback: some View {
         CoverArtView(
-            seed: abs(candidate.id.hashValue % 10_000),
+            seed: RecordDraft.stableArtSeed(artist: candidate.artist, title: candidate.title),
             style: .rings,
             initials: candidate.artist.artInitials,
             titleText: candidate.title

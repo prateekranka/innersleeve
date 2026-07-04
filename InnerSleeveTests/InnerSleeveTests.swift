@@ -1034,6 +1034,116 @@ extension InnerSleeveSerializedTests {
     }
 }
 
+// MARK: - Add/edit pipeline consistency
+
+extension InnerSleeveSerializedTests {
+    @MainActor
+    @Suite(.serialized)
+    struct AddEditPipelineTests {
+
+    private func makeRecord(
+        artist: String = "Taylor Swift",
+        title: String = "Midnights",
+        artSeed: Int = 4242,
+        vinylSeed: Int? = nil,
+        hasCoverArt: Bool = true,
+        appleMusicAlbumID: String? = nil
+    ) -> Record {
+        Record(
+            artist: artist,
+            title: title,
+            releaseYear: 2022,
+            label: "Republic",
+            pressingDescription: "LP",
+            vinylSeed: vinylSeed,
+            artSeed: artSeed,
+            hasCoverArt: hasCoverArt,
+            storageLocation: "Shelf",
+            appleMusicAlbumID: appleMusicAlbumID
+        )
+    }
+
+    @Test func stableArtSeedIsDeterministicAcrossProcesses() {
+        // Hard-coded expectations: Swift's `hashValue` is randomly seeded per
+        // launch, so these only hold if the seed derivation is truly stable.
+        #expect(RecordDraft.stableArtSeed(artist: "Taylor Swift", title: "Midnights") == 9665)
+        #expect(RecordDraft.stableArtSeed(artist: "Pink Floyd", title: "The Dark Side of the Moon") == 7429)
+        #expect(RecordDraft.stableArtSeed(artist: "", title: "") == 9336)
+    }
+
+    @Test func newDraftSeedFlowsUnchangedIntoSavedRecord() {
+        var draft = RecordDraft()
+        draft.artist = "Taylor Swift"
+        draft.title = "Midnights"
+
+        #expect(draft.artSeed == 9665)
+        #expect(draft.resolvedVinylSeed == 9665)
+
+        let record = Record(draft: draft)
+        #expect(record.artSeed == draft.artSeed)
+        #expect(record.resolvedVinylSeed == draft.resolvedVinylSeed)
+    }
+
+    @Test func editDraftKeepsThePersistedSeedsOfTheRecord() {
+        let record = makeRecord(artSeed: 4242, vinylSeed: nil)
+
+        let draft = RecordDraft(record: record)
+
+        // The edit form and vinyl editor previews must show the same
+        // generated art and vinyl pattern as the shelf and deck.
+        #expect(draft.artSeed == record.artSeed)
+        #expect(draft.resolvedVinylSeed == record.resolvedVinylSeed)
+    }
+
+    @Test func applyClearsAppleMusicMatchWhenIdentityChanges() {
+        let record = makeRecord(appleMusicAlbumID: "1649434004")
+        var draft = RecordDraft(record: record)
+        draft.title = "1989"
+
+        record.apply(draft)
+
+        #expect(record.appleMusicAlbumID == nil)
+    }
+
+    @Test func applyKeepsAppleMusicMatchWhenIdentityIsUnchanged() {
+        let record = makeRecord(appleMusicAlbumID: "1649434004")
+        var draft = RecordDraft(record: record)
+        draft.notes = "Cleaned and resleeved."
+
+        record.apply(draft)
+
+        #expect(record.appleMusicAlbumID == "1649434004")
+    }
+
+    @Test func refetchedArtworkRestoresCoverArtFlag() {
+        let record = makeRecord(hasCoverArt: false)
+
+        record.applyRefetchedArtwork(
+            Data([1, 2, 3]),
+            sourceURL: URL(string: "https://coverartarchive.org/release/test/front-1200")!
+        )
+
+        #expect(record.hasCoverArt)
+        #expect(record.coverImageData == Data([1, 2, 3]))
+    }
+
+    @Test func settingsStoreReusesLookupServiceUntilProviderChanges() {
+        let settings = SettingsStore()
+        settings.provider = .musicBrainz
+
+        let first = settings.makeLookupService() as AnyObject
+        let second = settings.makeLookupService() as AnyObject
+        #expect(first === second, "shared instance keeps the request throttle effective")
+
+        settings.provider = .discogs
+        let third = settings.makeLookupService() as AnyObject
+        #expect(first !== third)
+
+        settings.provider = .musicBrainz
+    }
+    }
+}
+
 // MARK: - Wishlist behavior
 
 extension InnerSleeveSerializedTests {

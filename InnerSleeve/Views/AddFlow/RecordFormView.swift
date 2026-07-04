@@ -28,6 +28,10 @@ struct RecordDraft {
     var conditionSleeve: ConditionGrade = .vgPlus
     var storageLocation = ""
     var notes = ""
+    /// Set when editing an existing record so every preview (and anything
+    /// derived from the seed, like `resolvedVinylSeed`) matches what is
+    /// already persisted and rendered on the shelf and deck.
+    var artSeedOverride: Int?
     var tracks: [TrackDraft] = [
         TrackDraft(side: .a, number: 1, title: ""),
         TrackDraft(side: .b, number: 1, title: ""),
@@ -59,6 +63,7 @@ struct RecordDraft {
     }
 
     init(record: Record) {
+        artSeedOverride = record.artSeed
         artist = record.artist
         title = record.title
         releaseYear = record.releaseYear
@@ -93,7 +98,19 @@ struct RecordDraft {
 
 extension RecordDraft {
     var artSeed: Int {
-        abs("\(artist)-\(title)".hashValue % 10_000)
+        artSeedOverride ?? Self.stableArtSeed(artist: artist, title: title)
+    }
+
+    /// FNV-1a over artist and title. Swift's `hashValue` is randomly seeded
+    /// per process, which made generated art drift between the form preview,
+    /// the saved record, and later launches.
+    static func stableArtSeed(artist: String, title: String) -> Int {
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in "\(artist)-\(title)".utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return Int(hash % 10_000)
     }
 
     var resolvedVinylStyle: VinylStyle {
@@ -266,7 +283,7 @@ struct RecordFormView: View {
         Section("Artwork") {
             ArtworkPreviewView(
                 imageData: draft.coverImageData,
-                artSeed: abs(draft.title.hashValue % 10_000),
+                artSeed: draft.artSeed,
                 initials: draft.artist.artInitials,
                 titleText: draft.title
             )
@@ -301,7 +318,7 @@ struct RecordFormView: View {
                 scale: $draft.labelArtScale,
                 offsetX: $draft.labelArtOffsetX,
                 offsetY: $draft.labelArtOffsetY,
-                artSeed: abs(draft.title.hashValue % 10_000),
+                artSeed: draft.artSeed,
                 initials: draft.artist.artInitials,
                 titleText: draft.title,
                 vinylAppearance: draft.vinylAppearance,

@@ -69,7 +69,6 @@ final class AppleMusicDeckPlayer {
     // MARK: Privates
 
     private let player = ApplicationMusicPlayer.shared
-    private var albumIDCache: [PersistentIdentifier: String] = [:]
 
     // MARK: Public API
 
@@ -98,9 +97,7 @@ final class AppleMusicDeckPlayer {
             return
         }
 
-        let recordID = record.persistentModelID
-
-        if let cachedID = albumIDCache[recordID] ?? record.appleMusicAlbumID {
+        if let savedID = record.appleMusicAlbumID {
             let clampedTrackIndex = AppleMusicDeckPlayer.clampedTrackIndex(
                 trackIndex,
                 trackCount: record.sequencedTracks.count
@@ -108,7 +105,7 @@ final class AppleMusicDeckPlayer {
             let track = record.sequencedTracks[safe: clampedTrackIndex]
             loadingMessage = "Loading album…"
             await play(
-                albumID: cachedID,
+                albumID: savedID,
                 startingAt: clampedTrackIndex,
                 albumTitle: record.title,
                 trackTitle: track?.title
@@ -124,12 +121,11 @@ final class AppleMusicDeckPlayer {
             }
             albumID = foundAlbumID
         } catch {
-            errorMessage = AppleMusicDeckPlayer.lookupFailureMessage(for: error)
+            errorMessage = AppleMusicDeckPlayer.failureMessage(for: error, fallback: "Apple Music lookup failed")
             return
         }
 
         record.appleMusicAlbumID = albumID
-        albumIDCache[recordID] = albumID
         try? modelContext.save()
 
         let clampedTrackIndex = AppleMusicDeckPlayer.clampedTrackIndex(
@@ -160,12 +156,21 @@ final class AppleMusicDeckPlayer {
 
         defer { isLoading = false }
 
+        // Records with a persisted album ID (seeded fixtures, previously
+        // matched records) reach this path directly, so it must run the
+        // same authorization flow as `loadAndPlay`.
+        guard await ensureAuthorization() else {
+            errorMessage = "Apple Music unavailable"
+            return
+        }
+
         do {
             var request = MusicCatalogResourceRequest<MusicKit.Album>(matching: \.id, equalTo: MusicItemID(albumID))
             request.limit = 1
             let response = try await request.response()
 
             guard let album = response.items.first else {
+                stop()
                 errorMessage = "Album unavailable"
                 return
             }
@@ -173,8 +178,8 @@ final class AppleMusicDeckPlayer {
             let albumWithTracks = try await album.with(.tracks)
             let tracks = Array(albumWithTracks.tracks ?? MusicItemCollection<MusicKit.Track>([]))
             guard !tracks.isEmpty else {
+                stop()
                 errorMessage = "Album has no tracks"
-                isPlaying = false
                 return
             }
             let clampedIndex = min(max(trackIndex, 0), max(tracks.count - 1, 0))
@@ -189,8 +194,10 @@ final class AppleMusicDeckPlayer {
             currentTrackIndex = clampedIndex
             isPlaying = true
         } catch {
-            errorMessage = "Playback failed"
-            isPlaying = false
+            // The queue may already have been replaced, so the previous
+            // now-playing state is no longer trustworthy either way.
+            stop()
+            errorMessage = AppleMusicDeckPlayer.failureMessage(for: error, fallback: "Playback failed")
         }
     }
 
@@ -322,7 +329,7 @@ final class AppleMusicDeckPlayer {
         return best.album
     }
 
-    private static func lookupFailureMessage(for error: Error) -> String {
+    private static func failureMessage(for error: Error, fallback: String) -> String {
         let description = String(describing: error).lowercased()
         if description.contains("token")
             || description.contains("permission")
@@ -331,7 +338,7 @@ final class AppleMusicDeckPlayer {
             || description.contains("account") {
             return "Apple Music setup needed"
         }
-        return "Apple Music lookup failed"
+        return fallback
     }
 }
 

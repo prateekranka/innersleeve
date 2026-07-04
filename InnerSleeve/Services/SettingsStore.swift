@@ -11,6 +11,11 @@ final class SettingsStore {
     private let providerKey = "releaseProvider"
     private let tokenAccount = "discogs-token"
 
+    /// One service per provider so per-instance rate limiting (MusicBrainz's
+    /// 1 req/s throttle) actually spans consecutive requests.
+    @ObservationIgnored
+    private var cachedLookupService: (provider: ReleaseProvider, service: ReleaseLookupService)?
+
     init() {
         let raw = UserDefaults.standard.string(forKey: providerKey) ?? ReleaseProvider.musicBrainz.rawValue
         provider = ReleaseProvider(rawValue: raw) ?? .musicBrainz
@@ -22,12 +27,18 @@ final class SettingsStore {
     }
 
     func makeLookupService() -> ReleaseLookupService {
+        if let cachedLookupService, cachedLookupService.provider == provider {
+            return cachedLookupService.service
+        }
+        let service: ReleaseLookupService
         switch provider {
         case .musicBrainz:
-            return MusicBrainzService()
+            service = MusicBrainzService()
         case .discogs:
-            return DiscogsService(tokenProvider: { self.discogsToken })
+            service = DiscogsService(tokenProvider: { self.discogsToken })
         }
+        cachedLookupService = (provider, service)
+        return service
     }
 }
 
