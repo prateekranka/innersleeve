@@ -22,6 +22,7 @@ struct RootView: View {
 
     @State private var mode: Mode = .shelf
     @State private var deckTarget: Record?
+    @State private var stageLight = StageLight()
     @Namespace private var glassNamespace
 
     var body: some View {
@@ -46,6 +47,7 @@ struct RootView: View {
             modeSwitcher
                 .padding(.bottom, 18)
         }
+        .environment(stageLight)
         .sensoryFeedback(.selection, trigger: mode)
     }
 

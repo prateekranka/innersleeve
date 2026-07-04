@@ -34,6 +34,12 @@ final class AppleMusicDeckPlayer {
     /// Whether the shared application player is currently playing.
     var isPlaying: Bool = false
 
+    /// True while `loadAndPlay` or `play` is in-flight.
+    private(set) var isLoading: Bool = false
+
+    /// Human-readable loading phase for `statusText` differentiation.
+    private var loadingMessage: String = ""
+
     /// The Apple Music album ID currently queued, if any.
     private(set) var currentAlbumID: String?
     private(set) var currentAlbumTitle: String?
@@ -47,6 +53,9 @@ final class AppleMusicDeckPlayer {
         }
         if let error = errorMessage {
             return error
+        }
+        if isLoading {
+            return loadingMessage
         }
         if isPlaying {
             return "Now playing"
@@ -79,6 +88,10 @@ final class AppleMusicDeckPlayer {
     /// result is persisted before playing.
     func loadAndPlay(record: Record, startingAt trackIndex: Int = 0, modelContext: ModelContext) async {
         errorMessage = nil
+        isLoading = true
+        loadingMessage = "Finding on Apple Music…"
+
+        defer { isLoading = false }
 
         guard await ensureAuthorization() else {
             errorMessage = "Apple Music unavailable"
@@ -87,13 +100,13 @@ final class AppleMusicDeckPlayer {
 
         let recordID = record.persistentModelID
 
-        // Check in-memory cache first, then the persisted property.
         if let cachedID = albumIDCache[recordID] ?? record.appleMusicAlbumID {
             let clampedTrackIndex = AppleMusicDeckPlayer.clampedTrackIndex(
                 trackIndex,
                 trackCount: record.sequencedTracks.count
             )
             let track = record.sequencedTracks[safe: clampedTrackIndex]
+            loadingMessage = "Loading album…"
             await play(
                 albumID: cachedID,
                 startingAt: clampedTrackIndex,
@@ -115,7 +128,6 @@ final class AppleMusicDeckPlayer {
             return
         }
 
-        // Persist the match.
         record.appleMusicAlbumID = albumID
         albumIDCache[recordID] = albumID
         try? modelContext.save()
@@ -125,6 +137,7 @@ final class AppleMusicDeckPlayer {
             trackCount: record.sequencedTracks.count
         )
         let track = record.sequencedTracks[safe: clampedTrackIndex]
+        loadingMessage = "Loading album…"
         await play(
             albumID: albumID,
             startingAt: clampedTrackIndex,
@@ -142,6 +155,10 @@ final class AppleMusicDeckPlayer {
         trackTitle: String? = nil
     ) async {
         errorMessage = nil
+        isLoading = true
+        loadingMessage = "Loading album…"
+
+        defer { isLoading = false }
 
         do {
             var request = MusicCatalogResourceRequest<MusicKit.Album>(matching: \.id, equalTo: MusicItemID(albumID))

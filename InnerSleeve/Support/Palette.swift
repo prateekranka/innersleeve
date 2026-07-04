@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// The Inner Sleeve palette, straight from the reference teardown.
 enum Palette {
@@ -63,5 +66,43 @@ struct SeededRandom: RandomNumberGenerator {
 
     mutating func pick<T>(_ array: [T]) -> T {
         array[int(in: 0...(array.count - 1))]
+    }
+}
+
+extension Color {
+    init?(hex: String) {
+        var value = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if value.hasPrefix("#") {
+            value.removeFirst()
+        }
+        guard value.count == 6, let number = UInt32(value, radix: 16) else {
+            return nil
+        }
+        self.init(
+            red: Double((number & 0xFF0000) >> 16) / 255.0,
+            green: Double((number & 0x00FF00) >> 8) / 255.0,
+            blue: Double(number & 0x0000FF) / 255.0
+        )
+    }
+
+    var hexString: String? {
+        #if canImport(UIKit)
+        let uiColor = UIColor(self)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+        return String(
+            format: "#%02X%02X%02X",
+            Int(round(red * 255)),
+            Int(round(green * 255)),
+            Int(round(blue * 255))
+        )
+        #else
+        return nil
+        #endif
     }
 }

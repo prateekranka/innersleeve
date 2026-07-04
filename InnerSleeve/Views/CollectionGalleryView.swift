@@ -10,9 +10,11 @@ struct CollectionGalleryView: View {
     @State private var addFlowPresented = false
     @State private var settingsPresented = false
     @State private var editRecord: Record? = nil
+    @State private var lookRecord: Record? = nil
     @State private var deleteRecord: Record? = nil
     @State private var pendingSelectionID: PersistentIdentifier?
     @State private var shelfMode: ShelfMode = .carousel
+    @State private var relightMode = false
     var onPutOnDeck: (Record) -> Void = { _ in }
 
     private var records: [Record] {
@@ -39,18 +41,27 @@ struct CollectionGalleryView: View {
 
                     switch shelfMode {
                     case .carousel:
-                        DepthCarouselView(
-                            items: records,
-                            selection: $selection,
-                            discDiameter: 340,
-                            onHeroTap: { detailRecord = $0 }
-                        ) { record, isSelected in
-                            RecordDiscView(record: record, glossStrength: isSelected ? 1.0 : 0.5)
-                                .contextMenu {
-                                    if isSelected {
-                                        recordContextMenu(for: record)
+                        ZStack {
+                            DepthCarouselView(
+                                items: records,
+                                selection: $selection,
+                                discDiameter: 340,
+                                onHeroTap: { detailRecord = $0 }
+                            ) { record, isSelected in
+                                RecordDiscView(record: record, glossStrength: isSelected ? 1.0 : 0.5)
+                                    .contextMenu {
+                                        if isSelected {
+                                            recordContextMenu(for: record)
+                                        }
                                     }
-                                }
+                            }
+
+                            if relightMode {
+                                StageLightControl()
+                                    .frame(width: 340, height: 340)
+                                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+                                    .zIndex(10)
+                            }
                         }
                         .frame(height: 420)
                         .frame(maxHeight: .infinity, alignment: .center)
@@ -59,10 +70,11 @@ struct CollectionGalleryView: View {
                             .padding(.bottom, 96)
 
                     case .displayShelf:
-                        DisplayShelfGridView(
+                        ShelfRoomView(
                             records: records,
                             onOpen: { detailRecord = $0 },
                             onEdit: { editRecord = $0 },
+                            onEditLook: { lookRecord = $0 },
                             onDelete: { deleteRecord = $0 },
                             onPutOnDeck: onPutOnDeck
                         )
@@ -103,6 +115,18 @@ struct CollectionGalleryView: View {
                 )
             }
         }
+        .sheet(item: $lookRecord) { record in
+            VinylDesignEditorView(
+                values: VinylLookValues(record: record),
+                preview: VinylPreviewConfiguration(record: record)
+            ) { values in
+                record.vinylStyleRaw = values.style.rawValue
+                record.vinylPrimaryHex = values.primaryHex
+                record.vinylSecondaryHex = values.secondaryHex
+                record.vinylSeed = values.seed
+                try? modelContext.save()
+            }
+        }
         .confirmationDialog(
             "Delete \(deleteRecord?.title ?? "record")?",
             isPresented: Binding(
@@ -139,29 +163,18 @@ struct CollectionGalleryView: View {
 
                 Spacer()
 
-                HStack(spacing: 6) {
-                    Button {
-                        shelfMode = .carousel
-                    } label: {
-                        Image(systemName: "circle.grid.cross")
-                            .font(.system(size: 12, weight: .semibold))
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        shelfMode = shelfMode == .carousel ? .displayShelf : .carousel
                     }
-                    .buttonStyle(.glass)
-                    .tint(shelfMode == .carousel ? Palette.orangeAccent : Palette.inkOnStage)
-                    .opacity(shelfMode == .carousel ? 1 : 0.68)
-                    .accessibilityLabel("Carousel shelf")
-
-                    Button {
-                        shelfMode = .displayShelf
-                    } label: {
-                        Image(systemName: "square.grid.3x2")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(.glass)
-                    .tint(shelfMode == .displayShelf ? Palette.orangeAccent : Palette.inkOnStage)
-                    .opacity(shelfMode == .displayShelf ? 1 : 0.68)
-                    .accessibilityLabel("Display shelf")
+                } label: {
+                    Image(systemName: shelfMode == .carousel ? "square.split.bottomrightquarter" : "circle.grid.cross")
+                        .font(.system(size: 12, weight: .semibold))
+                        .contentTransition(.symbolEffect(.replace))
                 }
+                .buttonStyle(.glass)
+                .tint(Palette.inkOnStage)
+                .accessibilityLabel(shelfMode == .carousel ? "Show display shelf" : "Show carousel")
 
                 Spacer()
 
@@ -234,6 +247,11 @@ struct CollectionGalleryView: View {
             }
 
         }
+        .overlay(alignment: .trailing) {
+            if shelfMode == .carousel {
+                relightButton
+            }
+        }
         .padding(.horizontal, 36)
         .animation(.easeInOut(duration: 0.22), value: selection)
     }
@@ -275,6 +293,11 @@ struct CollectionGalleryView: View {
         } label: {
             Label("Edit", systemImage: "pencil")
         }
+        Button {
+            lookRecord = record
+        } label: {
+            Label("Record look", systemImage: "record.circle")
+        }
         Button(role: .destructive) {
             deleteRecord = record
         } label: {
@@ -286,166 +309,36 @@ struct CollectionGalleryView: View {
             Label("Put on deck", systemImage: "dial.medium")
         }
     }
+
+    @ViewBuilder
+    private var relightButton: some View {
+        let button = Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                relightMode.toggle()
+            }
+        } label: {
+            Image(systemName: relightMode ? "sun.max.fill" : "sun.max")
+                .font(.system(size: 12, weight: .semibold))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .accessibilityLabel(relightMode ? "Hide relight control" : "Relight records")
+        .offset(x: 10, y: -2)
+
+        if relightMode {
+            button
+                .buttonStyle(.glassProminent)
+                .tint(Palette.warmYellow)
+        } else {
+            button
+                .buttonStyle(.glass)
+                .tint(Palette.inkOnStage)
+        }
+    }
 }
 
 private enum ShelfMode {
     case carousel
     case displayShelf
-}
-
-private struct DisplayShelfGridView: View {
-    var records: [Record]
-    var onOpen: (Record) -> Void
-    var onEdit: (Record) -> Void
-    var onDelete: (Record) -> Void
-    var onPutOnDeck: (Record) -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            let columns = proxy.size.width >= 390 ? 3 : 2
-            let rows = DisplayShelfRow.rows(from: records, columns: columns)
-
-            ScrollView(.vertical) {
-                LazyVStack(spacing: 22) {
-                    ForEach(rows) { row in
-                        DisplayShelfRowView(
-                            row: row,
-                            columns: columns,
-                            onOpen: onOpen,
-                            onEdit: onEdit,
-                            onDelete: onDelete,
-                            onPutOnDeck: onPutOnDeck
-                        )
-                    }
-                }
-                .padding(.horizontal, 22)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
-            }
-            .scrollIndicators(.hidden)
-        }
-    }
-}
-
-private struct DisplayShelfRow: Identifiable {
-    var id: String
-    var records: [Record]
-
-    static func rows(from records: [Record], columns: Int) -> [DisplayShelfRow] {
-        guard columns > 0 else { return [] }
-        return stride(from: 0, to: records.count, by: columns).map { start in
-            let end = min(start + columns, records.count)
-            let rowRecords = Array(records[start..<end])
-            let id = rowRecords
-                .map { String(describing: $0.persistentModelID) }
-                .joined(separator: "-")
-            return DisplayShelfRow(id: id, records: rowRecords)
-        }
-    }
-}
-
-private struct DisplayShelfRowView: View {
-    var row: DisplayShelfRow
-    var columns: Int
-    var onOpen: (Record) -> Void
-    var onEdit: (Record) -> Void
-    var onDelete: (Record) -> Void
-    var onPutOnDeck: (Record) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .bottom, spacing: 14) {
-                ForEach(row.records) { record in
-                    DisplayShelfRecordButton(
-                        record: record,
-                        onOpen: onOpen,
-                        onEdit: onEdit,
-                        onDelete: onDelete,
-                        onPutOnDeck: onPutOnDeck
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-
-                if row.records.count < columns {
-                    ForEach(0..<(columns - row.records.count), id: \.self) { _ in
-                        Color.clear
-                            .aspectRatio(0.72, contentMode: .fit)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-            .padding(.horizontal, 8)
-
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.76, green: 0.73, blue: 0.68),
-                            Color(red: 0.55, green: 0.51, blue: 0.45),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(height: 10)
-                .shadow(color: Palette.warmShadow.opacity(0.65), radius: 10, y: 6)
-        }
-    }
-}
-
-private struct DisplayShelfRecordButton: View {
-    var record: Record
-    var onOpen: (Record) -> Void
-    var onEdit: (Record) -> Void
-    var onDelete: (Record) -> Void
-    var onPutOnDeck: (Record) -> Void
-
-    var body: some View {
-        Button {
-            onOpen(record)
-        } label: {
-            VStack(spacing: 8) {
-                RecordDiscView(record: record, glossStrength: 0.7)
-                    .aspectRatio(1, contentMode: .fit)
-                    .shadow(color: Palette.warmShadow.opacity(0.55), radius: 12, y: 8)
-
-                VStack(spacing: 2) {
-                    Text(record.title)
-                        .font(.system(size: 10, weight: .semibold))
-                        .lineLimit(1)
-                    Text(record.artist)
-                        .font(.system(size: 9))
-                        .lineLimit(1)
-                        .foregroundStyle(Palette.inkOnStage.opacity(0.58))
-                }
-                .foregroundStyle(Palette.inkOnStage)
-                .multilineTextAlignment(.center)
-                .frame(height: 26)
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(0.72, contentMode: .fit)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button {
-                onEdit(record)
-            } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            Button(role: .destructive) {
-                onDelete(record)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-            Button {
-                onPutOnDeck(record)
-            } label: {
-                Label("Put on deck", systemImage: "dial.medium")
-            }
-        }
-        .accessibilityLabel("\(record.title), \(record.artist)")
-    }
 }
 
 #Preview("Full collection") {

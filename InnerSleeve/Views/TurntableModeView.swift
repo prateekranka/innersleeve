@@ -1,12 +1,22 @@
 import SwiftUI
 import SwiftData
 
+/// The tonearm's operational state.
+enum ArmState {
+    /// Parked off the record at the arm-rest clip.
+    case rest
+    /// Being manually positioned by the user.
+    case cue
+    /// Settled on the record, playing.
+    case play
+}
+
 /// Turntable Mode: a fixed deck with a vertical stream of records
 /// snapping onto the platter. Browsing by playing, not by opening cards.
 ///
 /// Integrates Apple Music playback via `AppleMusicDeckPlayer` so the
-/// on-deck record plays automatically. A stylus-cue gesture lets the
-/// user drop the needle at a different track.
+/// on-deck record plays automatically. The tonearm itself is the
+/// primary control: drag it to cue a track or park it to stop.
 struct TurntableModeView: View {
     @Query private var allRecords: [Record]
     var deckTarget: Record? = nil
@@ -16,17 +26,28 @@ struct TurntableModeView: View {
     @State private var dragAnchor: Double? = nil
     @State private var isDragging = false
     @State private var armLiftPulse = false
-    @State private var isStylusLifted = true
-    @State private var detailRecord: Record? = nil
 
     @State private var deckPlayer = AppleMusicDeckPlayer()
+
+    /// Tonearm angle in degrees: rest -16, outer groove 0, inner groove +14.
+    @State private var armAngle: Double = TonearmMath.restAngle
+
+    /// Current operational state of the tonearm.
+    @State private var armState: ArmState = .rest
+
+    /// Whether the tonearm headshell is lifted above the record.
+    @State private var isArmLifted: Bool = true
+    @State private var armDragStartAngle: Double? = nil
+    @State private var isDraggingTonearm = false
+    @State private var tonearmGestureSuppressesCarouselUntil: Date? = nil
+
+    /// The record currently shown in the detail sheet.
+    @State private var detailRecord: Record? = nil
+
     @Environment(\.modelContext) private var modelContext
 
-    /// 0 at the outer groove and 1 near the spindle while cueing; nil otherwise.
-    @State private var stylusCueProgress: Double? = nil
-
-    private let recordSpacing: CGFloat = 190
-    private let discDiameter: CGFloat = 204
+    private let recordSpacing: CGFloat = 170
+    private let discDiameter: CGFloat = 172
 
     /// Stable order — the queue must not reshuffle while records move through it.
     private var records: [Record] {
@@ -54,7 +75,6 @@ struct TurntableModeView: View {
                     let midY = proxy.size.height / 2 - 30
 
                     ZStack {
-                        // Queue records (off the deck).
                         ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
                             let offset = Double(index) - position
                             if abs(offset) <= 2.5 {
@@ -66,26 +86,18 @@ struct TurntableModeView: View {
 
                         TurntableDeckView(
                             displayText: displayText,
-                            stylusCueProgress: stylusCueProgress
+                            onStop: { liftStylus() },
+                            isPlaying: deckPlayer.isPlaying
                         )
                         .position(x: midX, y: midY)
                         .zIndex(5)
                         .allowsHitTesting(true)
 
-                        TonearmView(isLifted: isTonearmLifted)
+                        TonearmView(angle: armAngle, isLifted: isTonearmLifted)
+                            .grooveRiding(isGrooveRiding)
                             .position(x: midX, y: midY)
                             .zIndex(30)
-
-                        tonearmStopControl
-                            .position(x: midX, y: midY)
-                            .zIndex(35)
-
-                        // Stylus cue drag area sits on top of the on-deck record.
-                        if onDeckFactor(0) > 0.9, let _ = currentRecord {
-                            stylusCueDragZone
-                                .position(x: midX, y: midY)
-                                .zIndex(40)
-                        }
+                            .highPriorityGesture(tonearmDragGesture)
                     }
                     .contentShape(Rectangle())
                     .gesture(dragGesture)
@@ -141,11 +153,9 @@ struct TurntableModeView: View {
                 snap(to: index)
             }
         }
-        // The platter record eases toward the platter side as it lands.
         .offset(x: -52 * factor, y: 0)
     }
 
-    /// 1.0 when a record is centered on the platter, easing to 0 as it leaves.
     private func onDeckFactor(_ offset: Double) -> Double {
         max(0, 1 - min(abs(offset), 1))
     }
@@ -155,6 +165,7 @@ struct TurntableModeView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 6)
             .onChanged { value in
+                guard !tonearmGestureSuppressesCarousel else { return }
                 if dragAnchor == nil {
                     dragAnchor = position
                     isDragging = true
@@ -164,6 +175,11 @@ struct TurntableModeView: View {
                 position = CarouselGeometry.rubberBand(raw, count: records.count)
             }
             .onEnded { value in
+                guard !tonearmGestureSuppressesCarousel else {
+                    dragAnchor = nil
+                    isDragging = false
+                    return
+                }
                 dragAnchor = nil
                 isDragging = false
                 let flick = Double(value.predictedEndTranslation.height - value.translation.height)
@@ -183,7 +199,6 @@ struct TurntableModeView: View {
         if selection != clamped {
             pulseTonearm()
             selection = clamped
-            // Load album on record change.
             Task {
                 await play(records[clamped], startingAt: 0, source: .recordChange)
             }
@@ -192,6 +207,10 @@ struct TurntableModeView: View {
 
     private func pulseTonearm() {
         armLiftPulse = true
+        armState = .rest
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.7)) {
+            armAngle = TonearmMath.restAngle
+        }
         Task {
             try? await Task.sleep(for: .milliseconds(360))
             await MainActor.run {
@@ -203,7 +222,10 @@ struct TurntableModeView: View {
     // MARK: Deck display
 
     private var displayText: String {
-        AppleMusicDeckPlayer.deckTickerText(
+        if deckPlayer.isLoading {
+            return deckPlayer.statusText
+        }
+        return AppleMusicDeckPlayer.deckTickerText(
             albumTitle: currentRecord?.title,
             trackTitle: deckPlayer.currentTrackTitle ?? currentRecord?.sequencedTracks.first?.title
         )
@@ -211,7 +233,6 @@ struct TurntableModeView: View {
 
     // MARK: Chrome
 
-    /// Explicit "needle drop": logs a listen for the record on the platter.
     private var logPlayControl: some View {
         VStack {
             Spacer()
@@ -236,7 +257,7 @@ struct TurntableModeView: View {
         VStack(spacing: 18) {
             ZStack {
                 TurntableDeckView(displayText: "Queue empty")
-                TonearmView(isLifted: true)
+                TonearmView(angle: TonearmMath.restAngle, isLifted: true)
             }
             .scaleEffect(0.9)
             Text("Nothing on the deck")
@@ -245,76 +266,74 @@ struct TurntableModeView: View {
         }
     }
 
-    // MARK: Stylus cue
+    // MARK: Tonearm
 
-    /// Transparent drag zone overlaying the on-deck record.
-    /// Measures the radial distance from the record center and maps it
-    /// to 0 at the outer groove and 1 near the spindle.
-    private var stylusCueDragZone: some View {
-        Color.clear
-            .frame(width: discDiameter, height: discDiameter)
-            .contentShape(Circle())
-            .onTapGesture {
-                if let record = currentRecord {
-                    detailRecord = record
-                }
-            }
-            .gesture(stylusCueGesture)
-    }
-
-    private var stylusCueGesture: some Gesture {
+    /// Maps horizontal drag of the tonearm headshell to angle change.
+    private var tonearmDragGesture: some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
-                let centerX = discDiameter / 2
-                let centerY = discDiameter / 2
-                let dx = value.location.x - centerX
-                let dy = value.location.y - centerY
-                let distance = sqrt(dx * dx + dy * dy)
-                let maxRadius = discDiameter / 2
-                let progress = 1 - min(max(distance / maxRadius, 0), 1)
-                stylusCueProgress = progress
+                isDraggingTonearm = true
+                tonearmGestureSuppressesCarouselUntil = Date().addingTimeInterval(0.35)
+                armState = .cue
+                isArmLifted = true
+                if armDragStartAngle == nil {
+                    armDragStartAngle = armAngle
+                }
+                let startAngle = armDragStartAngle ?? armAngle
+                let deltaAngle = -value.translation.width * 0.22
+                armAngle = TonearmMath.clampedAngle(startAngle + deltaAngle)
             }
             .onEnded { _ in
-                guard let progress = stylusCueProgress,
-                      let record = currentRecord,
-                      !record.sequencedTracks.isEmpty else {
-                    stylusCueProgress = nil
-                    return
-                }
-                let trackIndex = AppleMusicDeckPlayer.stylusCueTrackIndex(
-                    progress: progress,
-                    trackDurations: record.sequencedTracks.map(\.duration)
-                )
-                stylusCueProgress = nil
+                isDraggingTonearm = false
+                tonearmGestureSuppressesCarouselUntil = Date().addingTimeInterval(0.35)
+                armDragStartAngle = nil
+                let finalAngle = TonearmMath.clampedAngle(armAngle)
+                armAngle = finalAngle
 
-                Task {
-                    await play(record, startingAt: trackIndex, source: .stylusDrop, cueProgress: progress)
+                if TonearmMath.isOnRecord(finalAngle), let record = currentRecord {
+                    let progress = TonearmMath.cueProgress(from: finalAngle)
+                    let trackIndex = AppleMusicDeckPlayer.stylusCueTrackIndex(
+                        progress: progress ?? 0,
+                        trackDurations: record.sequencedTracks.map(\.duration)
+                    )
+                    Task {
+                        await play(record, startingAt: trackIndex, source: .stylusDrop, cueProgress: progress)
+                    }
+                } else {
+                    armState = .rest
+                    armAngle = TonearmMath.restAngle
+                    isArmLifted = false
+                    liftStylus()
                 }
             }
-    }
-
-    private var tonearmStopControl: some View {
-        Button {
-            liftStylus()
-        } label: {
-            Color.clear
-                .frame(width: 156, height: 214)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .offset(x: 40, y: -12)
-        .accessibilityLabel("Lift stylus")
-        .accessibilityHint("Stops Apple Music playback")
-    }
-
-    private var isTonearmLifted: Bool {
-        isDragging || armLiftPulse || stylusCueProgress != nil || isStylusLifted || !deckPlayer.isPlaying
     }
 
     @MainActor
     private func liftStylus() {
         deckPlayer.stop()
-        isStylusLifted = true
+        armState = .rest
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.7)) {
+            armAngle = TonearmMath.restAngle
+        }
+        isArmLifted = false
+    }
+
+    private var isTonearmLifted: Bool {
+        if armLiftPulse { return true }
+        if armState == .cue { return true }
+        if deckPlayer.isLoading { return true }
+        if deckPlayer.isPlaying { return isArmLifted }
+        return false
+    }
+
+    private var isGrooveRiding: Bool {
+        deckPlayer.isPlaying && armState == .play && !isTonearmLifted
+    }
+
+    private var tonearmGestureSuppressesCarousel: Bool {
+        if isDraggingTonearm { return true }
+        guard let until = tonearmGestureSuppressesCarouselUntil else { return false }
+        return Date() < until
     }
 
     @MainActor
@@ -326,7 +345,8 @@ struct TurntableModeView: View {
     ) async {
         let tracks = record.sequencedTracks
         let clampedIndex = AppleMusicDeckPlayer.clampedTrackIndex(trackIndex, trackCount: tracks.count)
-        isStylusLifted = false
+        isArmLifted = true
+
         if let albumID = record.appleMusicAlbumID {
             await deckPlayer.play(
                 albumID: albumID,
@@ -338,11 +358,23 @@ struct TurntableModeView: View {
             await deckPlayer.loadAndPlay(record: record, startingAt: clampedIndex, modelContext: modelContext)
         }
 
-        if deckPlayer.isPlaying, let track = tracks[safe: clampedIndex] {
-            record.logTrackPlay(track: track, source: source, cueProgress: cueProgress)
-            try? modelContext.save()
+        if deckPlayer.isPlaying {
+            isArmLifted = false
+            armState = .play
+            let targetAngle = TonearmMath.playbackAngle(trackIndex: clampedIndex, trackCount: tracks.count)
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.65)) {
+                armAngle = TonearmMath.clampedAngle(targetAngle)
+            }
+            if let track = tracks[safe: clampedIndex] {
+                record.logTrackPlay(track: track, source: source, cueProgress: cueProgress)
+                try? modelContext.save()
+            }
         } else {
-            isStylusLifted = true
+            isArmLifted = false
+            armState = .rest
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.7)) {
+                armAngle = TonearmMath.restAngle
+            }
         }
     }
 
@@ -360,9 +392,15 @@ struct TurntableModeView: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(deckPlayer.isPlaying ? Palette.orangeAccent : Palette.inkOnStage.opacity(0.3))
-                            .frame(width: 6, height: 6)
+                        if deckPlayer.isLoading {
+                            ProgressView()
+                                .scaleEffect(0.4)
+                                .frame(width: 6, height: 6)
+                        } else {
+                            Circle()
+                                .fill(deckPlayer.isPlaying ? Palette.orangeAccent : Palette.inkOnStage.opacity(0.3))
+                                .frame(width: 6, height: 6)
+                        }
                         Text(deckPlayer.statusText)
                             .font(.system(size: 10, weight: .medium))
                     }

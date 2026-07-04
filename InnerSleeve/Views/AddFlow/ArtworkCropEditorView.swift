@@ -52,6 +52,10 @@ struct RecordLabelCropEditorView: View {
     var initials: String
     var titleText: String
     var vinylAppearance: VinylAppearance
+    var vinylStyle: VinylStyle? = nil
+    var vinylPrimaryHex: String? = nil
+    var vinylSecondaryHex: String? = nil
+    var vinylSeed: Int? = nil
 
     @State private var dragStartX: Double?
     @State private var dragStartY: Double?
@@ -73,6 +77,10 @@ struct RecordLabelCropEditorView: View {
                         labelArtOffsetX: offsetX,
                         labelArtOffsetY: offsetY,
                         appearance: vinylAppearance,
+                        vinylStyle: vinylStyle,
+                        vinylPrimaryHex: vinylPrimaryHex,
+                        vinylSecondaryHex: vinylSecondaryHex,
+                        vinylSeed: vinylSeed,
                         glossStrength: 0.62
                     )
                     .frame(width: side, height: side)

@@ -65,6 +65,41 @@ enum VinylAppearance: String, Codable, CaseIterable {
     }
 }
 
+enum VinylStyle: String, Codable, CaseIterable {
+    case black
+    case translucent
+    case swirl
+    case marble
+    case pinwheel
+    case burst
+    case halo
+    case splatterMix
+    case smoke
+
+    var displayName: String {
+        switch self {
+        case .black: return "Black"
+        case .translucent: return "Translucent"
+        case .swirl: return "Swirl"
+        case .marble: return "Marble"
+        case .pinwheel: return "Pinwheel"
+        case .burst: return "Burst"
+        case .halo: return "Halo"
+        case .splatterMix: return "Splatter"
+        case .smoke: return "Smoke"
+        }
+    }
+
+    static func legacyFallback(from appearance: VinylAppearance) -> VinylStyle {
+        switch appearance {
+        case .black: return .black
+        case .amber: return .translucent
+        case .smoke: return .smoke
+        case .splatter: return .splatterMix
+        }
+    }
+}
+
 @Model
 final class Record {
     var artist: String
@@ -85,6 +120,10 @@ final class Record {
     var labelArtOffsetX: Double?
     var labelArtOffsetY: Double?
     var vinylAppearance: VinylAppearance
+    var vinylStyleRaw: String?
+    var vinylPrimaryHex: String?
+    var vinylSecondaryHex: String?
+    var vinylSeed: Int?
     var artSeed: Int
     var artStyleRaw: String
     var hasCoverArt: Bool
@@ -128,6 +167,10 @@ final class Record {
         labelArtOffsetX: Double? = nil,
         labelArtOffsetY: Double? = nil,
         vinylAppearance: VinylAppearance = .black,
+        vinylStyleRaw: String? = nil,
+        vinylPrimaryHex: String? = nil,
+        vinylSecondaryHex: String? = nil,
+        vinylSeed: Int? = nil,
         artSeed: Int,
         artStyleRaw: String = CoverArtStyle.rings.rawValue,
         hasCoverArt: Bool = true,
@@ -161,6 +204,10 @@ final class Record {
         self.labelArtOffsetX = labelArtOffsetX
         self.labelArtOffsetY = labelArtOffsetY
         self.vinylAppearance = vinylAppearance
+        self.vinylStyleRaw = vinylStyleRaw
+        self.vinylPrimaryHex = vinylPrimaryHex
+        self.vinylSecondaryHex = vinylSecondaryHex
+        self.vinylSeed = vinylSeed
         self.artSeed = artSeed
         self.artStyleRaw = artStyleRaw
         self.hasCoverArt = hasCoverArt
@@ -181,6 +228,54 @@ final class Record {
 extension Record {
     var artStyle: CoverArtStyle {
         CoverArtStyle(rawValue: artStyleRaw) ?? .rings
+    }
+
+    var resolvedVinylStyle: VinylStyle {
+        if let vinylStyleRaw, let style = VinylStyle(rawValue: vinylStyleRaw) {
+            return style
+        }
+        return VinylStyle.legacyFallback(from: vinylAppearance)
+    }
+
+    var resolvedVinylPrimaryHex: String {
+        vinylPrimaryHex ?? Self.defaultVinylColors(for: resolvedVinylStyle, legacyAppearance: vinylAppearance).primary
+    }
+
+    var resolvedVinylSecondaryHex: String {
+        vinylSecondaryHex ?? Self.defaultVinylColors(for: resolvedVinylStyle, legacyAppearance: vinylAppearance).secondary
+    }
+
+    var resolvedVinylSeed: Int {
+        vinylSeed ?? artSeed
+    }
+
+    static func defaultVinylColors(
+        for style: VinylStyle,
+        legacyAppearance: VinylAppearance = .black
+    ) -> (primary: String, secondary: String) {
+        switch style {
+        case .black:
+            return ("#050505", "#242321")
+        case .translucent:
+            if legacyAppearance == .amber {
+                return ("#F5B23A", "#8C540D")
+            }
+            return ("#F25A1D", "#F2B21A")
+        case .swirl:
+            return ("#10171C", "#F25A1D")
+        case .marble:
+            return ("#F3F2ED", "#8A8F91")
+        case .pinwheel:
+            return ("#050505", "#F2B21A")
+        case .burst:
+            return ("#F25A1D", "#10171C")
+        case .halo:
+            return ("#10171C", "#F2B21A")
+        case .splatterMix:
+            return ("#050505", "#F25A1D")
+        case .smoke:
+            return ("#54565A", "#10171C")
+        }
     }
 
     var coverArtScaleValue: Double {

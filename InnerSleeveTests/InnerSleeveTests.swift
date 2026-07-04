@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import SwiftData
+import SwiftUI
 @testable import InnerSleeve
 
 @Suite(.serialized)
@@ -1201,6 +1202,269 @@ extension InnerSleeveSerializedTests {
             )
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: "Midnights", trackTitle: nil) == "Midnights")
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: nil, trackTitle: nil) == "No record on deck")
+        }
+    }
+}
+
+// MARK: - Tonearm math
+
+extension InnerSleeveSerializedTests {
+    @Suite(.serialized)
+    struct TonearmMathTests {
+
+        @Test func restAngleIsNegativeSixteen() {
+            #expect(TonearmMath.restAngle == -16)
+        }
+
+        @Test func outerGrooveIsZero() {
+            #expect(TonearmMath.outerGrooveAngle == 0)
+        }
+
+        @Test func innerGrooveIsFourteen() {
+            #expect(TonearmMath.innerGrooveAngle == 14)
+        }
+
+        @Test func clampedAngleBoundsValid() {
+            #expect(TonearmMath.clampedAngle(-16) == -16)
+            #expect(TonearmMath.clampedAngle(0) == 0)
+            #expect(TonearmMath.clampedAngle(14) == 14)
+            #expect(TonearmMath.clampedAngle(7) == 7)
+        }
+
+        @Test func clampedAngleRejectsBelowRest() {
+            #expect(TonearmMath.clampedAngle(-20) == -16)
+            #expect(TonearmMath.clampedAngle(-100) == -16)
+            #expect(TonearmMath.clampedAngle(-16.1) == -16)
+        }
+
+        @Test func clampedAngleRejectsAboveInnerGroove() {
+            #expect(TonearmMath.clampedAngle(15) == 14)
+            #expect(TonearmMath.clampedAngle(100) == 14)
+            #expect(TonearmMath.clampedAngle(14.1) == 14)
+        }
+
+        @Test func isOnRecordAtOuterGrooveAndBeyond() {
+            #expect(TonearmMath.isOnRecord(0))
+            #expect(TonearmMath.isOnRecord(7))
+            #expect(TonearmMath.isOnRecord(14))
+        }
+
+        @Test func isNotOnRecordInRestRegion() {
+            #expect(!TonearmMath.isOnRecord(-16))
+            #expect(!TonearmMath.isOnRecord(-1))
+            #expect(!TonearmMath.isOnRecord(-0.01))
+        }
+
+        @Test func cueProgressReturnsNilOffRecord() {
+            #expect(TonearmMath.cueProgress(from: -16) == nil)
+            #expect(TonearmMath.cueProgress(from: -1) == nil)
+        }
+
+        @Test func cueProgressMapsOuterGrooveToZero() {
+            #expect(TonearmMath.cueProgress(from: 0) == 0)
+        }
+
+        @Test func cueProgressMapsInnerGrooveToOne() {
+            #expect(TonearmMath.cueProgress(from: 14) == 1)
+        }
+
+        @Test func cueProgressIsLinear() {
+            #expect(TonearmMath.cueProgress(from: 7) == 0.5)
+            #expect(TonearmMath.cueProgress(from: 3.5) == 0.25)
+        }
+
+        @Test func cueProgressClampsAboveRange() {
+            #expect(TonearmMath.cueProgress(from: 20) == 1)
+        }
+
+        @Test func trackIndexZeroTrackCountReturnsZero() {
+            #expect(TonearmMath.trackIndex(from: 0, trackCount: 0) == 0)
+            #expect(TonearmMath.trackIndex(from: 7, trackCount: 0) == 0)
+        }
+
+        @Test func trackIndexOffRecordReturnsFirstTrack() {
+            #expect(TonearmMath.trackIndex(from: -16, trackCount: 10) == 0)
+            #expect(TonearmMath.trackIndex(from: -1, trackCount: 10) == 0)
+        }
+
+        @Test func trackIndexMapsEdges() {
+            #expect(TonearmMath.trackIndex(from: 0, trackCount: 10) == 0)
+            #expect(TonearmMath.trackIndex(from: 14, trackCount: 10) == 9)
+        }
+
+        @Test func trackIndexSingleTrackAlwaysReturnsZero() {
+            #expect(TonearmMath.trackIndex(from: 0, trackCount: 1) == 0)
+            #expect(TonearmMath.trackIndex(from: 14, trackCount: 1) == 0)
+            #expect(TonearmMath.trackIndex(from: 7, trackCount: 1) == 0)
+        }
+
+        @Test func trackIndexIsMonotonicallyIncreasing() {
+            let count = 12
+            var previous = -1
+            for angle in stride(from: 0.0, through: 14.0, by: 0.5) {
+                let index = TonearmMath.trackIndex(from: angle, trackCount: count)
+                #expect(index >= previous)
+                previous = index
+            }
+        }
+
+        @Test func trackIndexMidAngleReturnsMidTrack() {
+            #expect(TonearmMath.trackIndex(from: 7, trackCount: 11) == 5)
+            #expect(TonearmMath.trackIndex(from: 7, trackCount: 5) == 2)
+        }
+
+        @Test func playbackAngleUsesOuterGrooveWhenLocalTracksAreMissing() {
+            #expect(TonearmMath.playbackAngle(trackIndex: 0, trackCount: 0) == TonearmMath.outerGrooveAngle)
+            #expect(TonearmMath.playbackAngle(trackIndex: 3, trackCount: 1) == TonearmMath.outerGrooveAngle)
+        }
+
+        @Test func playbackAngleMapsTrackIndexAcrossGrooves() {
+            #expect(TonearmMath.playbackAngle(trackIndex: 0, trackCount: 5) == TonearmMath.outerGrooveAngle)
+            #expect(TonearmMath.playbackAngle(trackIndex: 4, trackCount: 5) == TonearmMath.innerGrooveAngle)
+            #expect(TonearmMath.playbackAngle(trackIndex: 2, trackCount: 5) == 7)
+            #expect(TonearmMath.playbackAngle(trackIndex: 99, trackCount: 5) == TonearmMath.innerGrooveAngle)
+        }
+
+        @Test func playbackMotionIsZeroWhenNotPlaying() {
+            let motion = TonearmPlaybackMotion.values(playbackTime: 12, isPlaying: false)
+
+            #expect(motion == .zero)
+            #expect(TonearmPlaybackMotion.verticalOffset(playbackTime: 12, isPlaying: false) == 0)
+            #expect(TonearmPlaybackMotion.headshellRotationDegrees(playbackTime: 12, isPlaying: false) == 0)
+        }
+
+        @Test func playbackMotionIsZeroBeforeStylusDropTime() {
+            #expect(TonearmPlaybackMotion.values(playbackTime: 0, isPlaying: true) == .zero)
+            #expect(TonearmPlaybackMotion.values(playbackTime: -0.25, isPlaying: true) == .zero)
+        }
+
+        @Test func playbackMotionAmplitudeStaysSubtle() {
+            for time in stride(from: 0.0, through: 90.0, by: 0.05) {
+                let motion = TonearmPlaybackMotion.values(playbackTime: time, isPlaying: true)
+
+                #expect(abs(motion.verticalOffset) <= TonearmPlaybackMotion.maximumVerticalOffset)
+                #expect(abs(motion.verticalOffset) < 1)
+                #expect(abs(motion.headshellRotationDegrees) <= TonearmPlaybackMotion.maximumHeadshellRotationDegrees)
+            }
+        }
+
+        @Test func playbackMotionFadesInAfterStylusDrop() {
+            let early = TonearmPlaybackMotion.values(playbackTime: 0.2, isPlaying: true)
+            let settled = TonearmPlaybackMotion.values(playbackTime: 0.2 + TonearmPlaybackMotion.fadeInDuration, isPlaying: true)
+
+            #expect(abs(early.verticalOffset) < TonearmPlaybackMotion.maximumVerticalOffset * 0.08)
+            #expect(abs(early.headshellRotationDegrees) < TonearmPlaybackMotion.maximumHeadshellRotationDegrees * 0.08)
+            #expect(abs(settled.verticalOffset) > abs(early.verticalOffset))
+            #expect(abs(settled.headshellRotationDegrees) > abs(early.headshellRotationDegrees))
+        }
+
+        @Test func playbackMotionIsDeterministicForSameInputs() {
+            let first = TonearmPlaybackMotion.values(playbackTime: 37.25, isPlaying: true)
+            let second = TonearmPlaybackMotion.values(playbackTime: 37.25, isPlaying: true)
+
+            #expect(first == second)
+            #expect(TonearmPlaybackMotion.verticalOffset(playbackTime: 37.25, isPlaying: true) == first.verticalOffset)
+            #expect(TonearmPlaybackMotion.headshellRotationDegrees(playbackTime: 37.25, isPlaying: true) == first.headshellRotationDegrees)
+        }
+    }
+}
+
+// MARK: - Vinyl look system
+
+extension InnerSleeveSerializedTests {
+    @Suite(.serialized)
+    struct VinylLookTests {
+
+        @Test func colorHexRoundTrips() {
+            let color = Color(hex: "#F25A1D")
+
+            #expect(color?.hexString == "#F25A1D")
+        }
+
+        @Test func legacyVinylAppearanceMapsToResolvedStyle() {
+            #expect(VinylStyle.legacyFallback(from: .black) == .black)
+            #expect(VinylStyle.legacyFallback(from: .amber) == .translucent)
+            #expect(VinylStyle.legacyFallback(from: .smoke) == .smoke)
+            #expect(VinylStyle.legacyFallback(from: .splatter) == .splatterMix)
+        }
+
+        @Test func recordUsesExplicitVinylStyleOverLegacyAppearance() {
+            let record = Record(
+                artist: "Taylor Swift",
+                title: "Midnights",
+                releaseYear: 2022,
+                label: "Republic",
+                pressingDescription: "LP",
+                vinylAppearance: .black,
+                vinylStyleRaw: VinylStyle.marble.rawValue,
+                vinylPrimaryHex: "#F3F2ED",
+                vinylSecondaryHex: "#10171C",
+                vinylSeed: 42,
+                artSeed: 7,
+                storageLocation: "Shelf"
+            )
+
+            #expect(record.resolvedVinylStyle == .marble)
+            #expect(record.resolvedVinylPrimaryHex == "#F3F2ED")
+            #expect(record.resolvedVinylSecondaryHex == "#10171C")
+            #expect(record.resolvedVinylSeed == 42)
+        }
+
+        @Test func patternGeometryIsDeterministicForSameSeed() {
+            let first = VinylPatternGeometry.blobs(seed: 1234, count: 12)
+            let second = VinylPatternGeometry.blobs(seed: 1234, count: 12)
+            let different = VinylPatternGeometry.blobs(seed: 1235, count: 12)
+
+            #expect(first == second)
+            #expect(first != different)
+        }
+
+        @Test func rayGeometryIsDeterministicForSameSeed() {
+            let first = VinylPatternGeometry.rays(seed: 88, count: 10)
+            let second = VinylPatternGeometry.rays(seed: 88, count: 10)
+
+            #expect(first == second)
+        }
+    }
+}
+
+// MARK: - Stage lighting
+
+extension InnerSleeveSerializedTests {
+    @Suite(.serialized)
+    struct StageLightTests {
+
+        @Test func defaultLightMatchesLegacyGlossAngle() {
+            #expect(abs(StageLightMath.angle(from: StageLightMath.defaultPosition) - (-18.0)) < 0.001)
+        }
+
+        @Test func lightPositionClampsToNormalizedBounds() {
+            let clamped = StageLightMath.clamped(position: CGPoint(x: -3, y: 4))
+
+            #expect(clamped.x == -1)
+            #expect(clamped.y == 1)
+        }
+
+        @Test func intensityClampsToUnitRange() {
+            #expect(StageLightMath.clampedIntensity(-0.4) == 0)
+            #expect(StageLightMath.clampedIntensity(0.7) == 0.7)
+            #expect(StageLightMath.clampedIntensity(2.4) == 1)
+        }
+
+        @Test func elevationIsHighestNearCenter() {
+            let center = StageLightMath.elevation(from: .zero)
+            let corner = StageLightMath.elevation(from: CGPoint(x: 1, y: 1))
+
+            #expect(center == 1)
+            #expect(corner == 0)
+        }
+
+        @Test func stageLightStoresClampedValues() {
+            let light = StageLight(position: CGPoint(x: 2, y: -2), intensity: 4)
+
+            #expect(light.position.x == 1)
+            #expect(light.position.y == -1)
+            #expect(light.intensity == 1)
         }
     }
 }

@@ -20,6 +20,10 @@ struct RecordDraft {
     var labelArtOffsetX = 0.0
     var labelArtOffsetY = 0.0
     var vinylAppearance: VinylAppearance = .black
+    var vinylStyleRaw: String?
+    var vinylPrimaryHex: String?
+    var vinylSecondaryHex: String?
+    var vinylSeed: Int?
     var conditionMedia: ConditionGrade = .nearMint
     var conditionSleeve: ConditionGrade = .vgPlus
     var storageLocation = ""
@@ -73,6 +77,10 @@ struct RecordDraft {
         labelArtOffsetX = record.labelArtOffsetXValue
         labelArtOffsetY = record.labelArtOffsetYValue
         vinylAppearance = record.vinylAppearance
+        vinylStyleRaw = record.vinylStyleRaw
+        vinylPrimaryHex = record.vinylPrimaryHex
+        vinylSecondaryHex = record.vinylSecondaryHex
+        vinylSeed = record.vinylSeed
         conditionMedia = record.conditionMedia
         conditionSleeve = record.conditionSleeve
         storageLocation = record.storageLocation
@@ -80,6 +88,31 @@ struct RecordDraft {
         tracks = record.tracks
             .sorted { ($0.side.rawValue, $0.trackNumber) < ($1.side.rawValue, $1.trackNumber) }
             .map { TrackDraft(side: $0.side, number: $0.trackNumber, title: $0.title, duration: $0.duration) }
+    }
+}
+
+extension RecordDraft {
+    var artSeed: Int {
+        abs("\(artist)-\(title)".hashValue % 10_000)
+    }
+
+    var resolvedVinylStyle: VinylStyle {
+        if let vinylStyleRaw, let style = VinylStyle(rawValue: vinylStyleRaw) {
+            return style
+        }
+        return VinylStyle.legacyFallback(from: vinylAppearance)
+    }
+
+    var resolvedVinylPrimaryHex: String {
+        vinylPrimaryHex ?? Record.defaultVinylColors(for: resolvedVinylStyle, legacyAppearance: vinylAppearance).primary
+    }
+
+    var resolvedVinylSecondaryHex: String {
+        vinylSecondaryHex ?? Record.defaultVinylColors(for: resolvedVinylStyle, legacyAppearance: vinylAppearance).secondary
+    }
+
+    var resolvedVinylSeed: Int {
+        vinylSeed ?? artSeed
     }
 }
 
@@ -96,6 +129,7 @@ struct RecordFormView: View {
     @State private var draft: RecordDraft
     @State private var isLoadingCover = false
     @State private var coverLoadError: String?
+    @State private var vinylEditorPresented = false
     var title: String = "Record"
     var saveTitle: String = "Save"
     var onSave: (RecordDraft) -> Void
@@ -154,6 +188,17 @@ struct RecordFormView: View {
                 .disabled(draft.artist.trimmingCharacters(in: .whitespaces).isEmpty || draft.title.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
+        .sheet(isPresented: $vinylEditorPresented) {
+            VinylDesignEditorView(
+                values: VinylLookValues(draft: draft),
+                preview: VinylPreviewConfiguration(draft: draft)
+            ) { values in
+                draft.vinylStyleRaw = values.style.rawValue
+                draft.vinylPrimaryHex = values.primaryHex
+                draft.vinylSecondaryHex = values.secondaryHex
+                draft.vinylSeed = values.seed
+            }
+        }
     }
 
     private var identitySection: some View {
@@ -177,6 +222,43 @@ struct RecordFormView: View {
                     Text(appearance.displayName).tag(appearance)
                 }
             }
+            Button {
+                vinylEditorPresented = true
+            } label: {
+                HStack(spacing: 12) {
+                    RecordDiscView(
+                        artSeed: draft.artSeed,
+                        artStyle: .rings,
+                        initials: draft.artist.artInitials,
+                        titleText: draft.title,
+                        coverImageData: draft.coverImageData,
+                        labelArtScale: draft.labelArtScale,
+                        labelArtOffsetX: draft.labelArtOffsetX,
+                        labelArtOffsetY: draft.labelArtOffsetY,
+                        appearance: draft.vinylAppearance,
+                        vinylStyle: draft.resolvedVinylStyle,
+                        vinylPrimaryHex: draft.resolvedVinylPrimaryHex,
+                        vinylSecondaryHex: draft.resolvedVinylSecondaryHex,
+                        vinylSeed: draft.resolvedVinylSeed,
+                        glossStrength: 0.72
+                    )
+                    .frame(width: 44, height: 44)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Record look")
+                        Text(draft.resolvedVinylStyle.displayName)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -222,7 +304,11 @@ struct RecordFormView: View {
                 artSeed: abs(draft.title.hashValue % 10_000),
                 initials: draft.artist.artInitials,
                 titleText: draft.title,
-                vinylAppearance: draft.vinylAppearance
+                vinylAppearance: draft.vinylAppearance,
+                vinylStyle: draft.resolvedVinylStyle,
+                vinylPrimaryHex: draft.resolvedVinylPrimaryHex,
+                vinylSecondaryHex: draft.resolvedVinylSecondaryHex,
+                vinylSeed: draft.resolvedVinylSeed
             )
             .frame(maxWidth: .infinity)
             .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))

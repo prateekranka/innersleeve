@@ -144,7 +144,11 @@ extension Record {
             labelArtOffsetX: draft.labelArtOffsetX,
             labelArtOffsetY: draft.labelArtOffsetY,
             vinylAppearance: draft.vinylAppearance,
-            artSeed: abs("\(draft.artist)-\(draft.title)".hashValue % 10_000),
+            vinylStyleRaw: draft.vinylStyleRaw,
+            vinylPrimaryHex: draft.vinylPrimaryHex,
+            vinylSecondaryHex: draft.vinylSecondaryHex,
+            vinylSeed: draft.vinylSeed,
+            artSeed: draft.artSeed,
             artStyleRaw: CoverArtStyle.rings.rawValue,
             conditionMedia: draft.conditionMedia,
             conditionSleeve: draft.conditionSleeve,
@@ -175,6 +179,10 @@ extension Record {
         labelArtOffsetX = draft.labelArtOffsetX
         labelArtOffsetY = draft.labelArtOffsetY
         vinylAppearance = draft.vinylAppearance
+        vinylStyleRaw = draft.vinylStyleRaw
+        vinylPrimaryHex = draft.vinylPrimaryHex
+        vinylSecondaryHex = draft.vinylSecondaryHex
+        vinylSeed = draft.vinylSeed
         conditionMedia = draft.conditionMedia
         conditionSleeve = draft.conditionSleeve
         storageLocation = draft.storageLocation

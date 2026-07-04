@@ -71,6 +71,11 @@ struct SleevePullView: View {
                 .onTapGesture {
                     if revealed { collapse() }
                 }
+
+            StageLightControl()
+                .frame(width: 334, height: 246)
+                .offset(x: 10)
+                .zIndex(4)
         }
         .frame(width: 390, height: 260)
     }

@@ -219,7 +219,7 @@ struct RecordDetailView: View {
             sectionHeader("Pressing & Copy")
             detailRow("Pressing", record.pressingDescription)
             detailRow("Format", record.format)
-            detailRow("Vinyl", record.vinylAppearance.displayName)
+            detailRow("Vinyl", record.resolvedVinylStyle.displayName)
             detailRow("Condition", "\(record.conditionMedia.displayName) media, \(record.conditionSleeve.displayName) sleeve")
             detailRow("Storage", record.storageLocation)
             if let date = record.purchaseDate {
