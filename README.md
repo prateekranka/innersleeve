@@ -1,4 +1,4 @@
-# Inner Sleeve
+# Wax Ledger
 
 A SwiftUI iPhone app for tracking a physical vinyl record collection — built as an
 interactive music object, not a catalog. iOS 26+, SwiftData, no backend, no AI.

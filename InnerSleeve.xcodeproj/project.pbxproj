@@ -308,7 +308,7 @@
 				DEVELOPMENT_TEAM = 4JRB53LG5C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Inner Sleeve";
+				INFOPLIST_KEY_CFBundleDisplayName = "Wax Ledger";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Play albums on the deck while you browse your collection.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan record barcodes to prefill catalog metadata.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -338,7 +338,7 @@
 				DEVELOPMENT_TEAM = 4JRB53LG5C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Inner Sleeve";
+				INFOPLIST_KEY_CFBundleDisplayName = "Wax Ledger";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Play albums on the deck while you browse your collection.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan record barcodes to prefill catalog metadata.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

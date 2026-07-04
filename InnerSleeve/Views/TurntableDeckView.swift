@@ -111,7 +111,7 @@ struct TurntableDeckView: View {
     }
 
     private var brandMark: some View {
-        Text("INNER SLEEVE · IS-1")
+        Text("WAX LEDGER · WL-1")
             .font(.system(size: 7, weight: .semibold, design: .monospaced))
             .kerning(1.2)
             .foregroundStyle(Color.black.opacity(0.35))

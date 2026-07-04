@@ -33,7 +33,7 @@ enum ReleaseLookupError: Error, Equatable, LocalizedError {
         case .offline: return "Network unavailable."
         case .notFound: return "No matching release found."
         case .rateLimited: return "Catalog rate limit reached. Try again shortly."
-        case .decoding: return "The catalog returned data Inner Sleeve could not read."
+        case .decoding: return "The catalog returned data Wax Ledger could not read."
         }
     }
 }
