@@ -254,15 +254,17 @@ private struct ConsoleTableView: View {
         ZStack(alignment: .bottom) {
             table
             HStack(alignment: .bottom) {
-                LampView(isOn: lampOn)
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                            lampOn.toggle()
-                        }
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        lampOn.toggle()
                     }
-                    .sensoryFeedback(.impact(weight: .light), trigger: lampOn)
-                    .accessibilityLabel("Lamp")
-                    .accessibilityAddTraits(.isButton)
+                } label: {
+                    LampView(isOn: lampOn)
+                }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.impact(weight: .light), trigger: lampOn)
+                .accessibilityLabel(lampOn ? "Turn lamp off" : "Turn lamp on")
+                .accessibilityHint("Adjusts lighting on records in the living room")
 
                 Spacer()
 

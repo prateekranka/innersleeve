@@ -145,7 +145,7 @@ private struct ReleaseDTO: Decodable {
         let year = date.flatMap { Int($0.prefix(4)) }
         return ReleaseCandidate(
             id: "mb:\(id)",
-            artist: artistCredit?.map(\.name).joined(separator: "") ?? "Unknown artist",
+            artist: ArtistCreditDTO.formattedCredit(from: artistCredit),
             title: title,
             year: year,
             label: label,
@@ -161,6 +161,15 @@ private struct ReleaseDTO: Decodable {
 
 private struct ArtistCreditDTO: Decodable {
     var name: String
+    var joinphrase: String?
+
+    static func formattedCredit(from credits: [ArtistCreditDTO]?) -> String {
+        guard let credits, !credits.isEmpty else { return "Unknown artist" }
+        return credits.enumerated().map { index, credit in
+            let separator = index < credits.count - 1 ? (credit.joinphrase ?? " ") : ""
+            return credit.name + separator
+        }.joined()
+    }
 }
 
 private struct LabelInfoDTO: Decodable {

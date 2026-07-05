@@ -37,7 +37,7 @@ struct RootView: View {
                         }
                     }
                 case .deck:
-                    TurntableModeView(deckTarget: deckTarget)
+                    TurntableModeView(deckTarget: $deckTarget)
                 case .wanted:
                     WishlistView()
                 }

@@ -550,6 +550,40 @@ extension InnerSleeveSerializedTests {
             #expect(detailed.coverArtURL?.absoluteString == "https://coverartarchive.org/release/11111111-2222-3333-4444-555555555555/front-1200")
         }
 
+        @Test func musicBrainzDetailsJoinsMultiArtistCreditsWithJoinphrase() async throws {
+            let json = """
+            {
+              "id": "22222222-3333-4444-5555-666666666666",
+              "title": "Split Credit",
+              "artist-credit": [
+                { "name": "Roger Waters", "joinphrase": " & " },
+                { "name": "David Gilmour" }
+              ],
+              "media": []
+            }
+            """
+            let service = makeMusicBrainzService { _ in
+                (Data(json.utf8), 200, [:])
+            }
+            let candidate = ReleaseCandidate(
+                id: "mb:22222222-3333-4444-5555-666666666666",
+                artist: "Fallback",
+                title: "Split Credit",
+                year: nil,
+                label: nil,
+                catalogNumber: nil,
+                format: nil,
+                country: nil,
+                barcode: nil,
+                coverArtURL: nil,
+                tracks: []
+            )
+
+            let detailed = try await service.details(for: candidate)
+
+            #expect(detailed.artist == "Roger Waters & David Gilmour")
+        }
+
         @Test func musicBrainzNoResultsThrowsNotFound() async {
             let service = makeMusicBrainzService { _ in
                 (Data(#"{"releases":[]}"#.utf8), 200, [:])
@@ -1202,6 +1236,42 @@ extension InnerSleeveSerializedTests {
             )
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: "Midnights", trackTitle: nil) == "Midnights")
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: nil, trackTitle: nil) == "No record on deck")
+        }
+
+        @Test func appleMusicTrackIndexPrefersExactTitleMatch() {
+            let localTitles = ["Intro", "Time", "Money"]
+            let remoteTitles = ["Speak to Me", "Time", "Money", "Bonus Track"]
+
+            #expect(
+                AppleMusicDeckPlayer.appleMusicTrackIndex(
+                    localIndex: 1,
+                    localTitles: localTitles,
+                    appleMusicTitles: remoteTitles
+                ) == 1
+            )
+        }
+
+        @Test func appleMusicTrackIndexFallsBackWhenTitlesDoNotMatch() {
+            let localTitles = ["Alpha", "Beta", "Gamma"]
+            let remoteTitles = ["One", "Two", "Three", "Four"]
+
+            #expect(
+                AppleMusicDeckPlayer.appleMusicTrackIndex(
+                    localIndex: 2,
+                    localTitles: localTitles,
+                    appleMusicTitles: remoteTitles
+                ) == 2
+            )
+        }
+
+        @Test func appleMusicTrackIndexClampsBeyondRemoteTrackCount() {
+            #expect(
+                AppleMusicDeckPlayer.appleMusicTrackIndex(
+                    localIndex: 5,
+                    localTitles: ["A", "B", "C", "D", "E", "F"],
+                    appleMusicTitles: ["One", "Two"]
+                ) == 1
+            )
         }
     }
 }

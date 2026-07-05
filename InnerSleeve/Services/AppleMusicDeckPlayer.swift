@@ -105,15 +105,22 @@ final class AppleMusicDeckPlayer {
                 trackIndex,
                 trackCount: record.sequencedTracks.count
             )
+            let localTrackTitles = record.sequencedTracks.map(\.title)
             let track = record.sequencedTracks[safe: clampedTrackIndex]
             loadingMessage = "Loading album…"
             await play(
                 albumID: cachedID,
                 startingAt: clampedTrackIndex,
                 albumTitle: record.title,
+                localTrackTitles: localTrackTitles,
                 trackTitle: track?.title
             )
-            return
+            if errorMessage == nil {
+                return
+            }
+            albumIDCache.removeValue(forKey: recordID)
+            record.appleMusicAlbumID = nil
+            try? modelContext.save()
         }
 
         let albumID: String
@@ -136,22 +143,25 @@ final class AppleMusicDeckPlayer {
             trackIndex,
             trackCount: record.sequencedTracks.count
         )
+        let localTrackTitles = record.sequencedTracks.map(\.title)
         let track = record.sequencedTracks[safe: clampedTrackIndex]
         loadingMessage = "Loading album…"
         await play(
             albumID: albumID,
             startingAt: clampedTrackIndex,
             albumTitle: record.title,
+            localTrackTitles: localTrackTitles,
             trackTitle: track?.title
         )
     }
 
     /// Play the album identified by `albumID`, optionally starting at a
-    /// different track index (0-based, from the catalog track list order).
+    /// local track index mapped onto the Apple Music track list.
     func play(
         albumID: String,
         startingAt trackIndex: Int = 0,
         albumTitle: String? = nil,
+        localTrackTitles: [String] = [],
         trackTitle: String? = nil
     ) async {
         errorMessage = nil
@@ -177,16 +187,21 @@ final class AppleMusicDeckPlayer {
                 isPlaying = false
                 return
             }
-            let clampedIndex = min(max(trackIndex, 0), max(tracks.count - 1, 0))
+            let appleMusicTitles = tracks.map(\.title)
+            let mappedIndex = AppleMusicDeckPlayer.appleMusicTrackIndex(
+                localIndex: trackIndex,
+                localTitles: localTrackTitles,
+                appleMusicTitles: appleMusicTitles
+            )
 
-            let startTrack = tracks[clampedIndex]
+            let startTrack = tracks[mappedIndex]
             player.queue = ApplicationMusicPlayer.Queue(album: albumWithTracks, startingAt: startTrack)
 
             try await player.play()
             currentAlbumID = albumID
             currentAlbumTitle = albumTitle ?? album.title
             currentTrackTitle = trackTitle ?? startTrack.title
-            currentTrackIndex = clampedIndex
+            currentTrackIndex = mappedIndex
             isPlaying = true
         } catch {
             errorMessage = "Playback failed"
@@ -282,6 +297,44 @@ final class AppleMusicDeckPlayer {
     nonisolated static func clampedTrackIndex(_ index: Int, trackCount: Int) -> Int {
         guard trackCount > 0 else { return 0 }
         return min(max(index, 0), trackCount - 1)
+    }
+
+    /// Maps a local collection track index onto an Apple Music album track list.
+    /// Prefers exact or partial title matches before falling back to index clamping.
+    nonisolated static func appleMusicTrackIndex(
+        localIndex: Int,
+        localTitles: [String],
+        appleMusicTitles: [String]
+    ) -> Int {
+        guard !appleMusicTitles.isEmpty else { return 0 }
+
+        if let localTitle = localTitles[safe: localIndex] {
+            let normalizedLocal = normalizedTrackTitle(localTitle)
+            if !normalizedLocal.isEmpty {
+                if let exact = appleMusicTitles.firstIndex(where: {
+                    normalizedTrackTitle($0) == normalizedLocal
+                }) {
+                    return exact
+                }
+                if let partial = appleMusicTitles.firstIndex(where: {
+                    let normalizedRemote = normalizedTrackTitle($0)
+                    return normalizedRemote.contains(normalizedLocal)
+                        || normalizedLocal.contains(normalizedRemote)
+                }) {
+                    return partial
+                }
+            }
+        }
+
+        return min(max(localIndex, 0), appleMusicTitles.count - 1)
+    }
+
+    nonisolated static func normalizedTrackTitle(_ title: String) -> String {
+        title
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     /// Picks the best album match for a record's artist and title.

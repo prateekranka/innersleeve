@@ -19,7 +19,11 @@ enum ArmState {
 /// primary control: drag it to cue a track or park it to stop.
 struct TurntableModeView: View {
     @Query private var allRecords: [Record]
-    var deckTarget: Record? = nil
+    @Binding var deckTarget: Record?
+
+    init(deckTarget: Binding<Record?> = .constant(nil)) {
+        _deckTarget = deckTarget
+    }
 
     @State private var selection: Int = 0
     @State private var position: Double = 0
@@ -107,7 +111,10 @@ struct TurntableModeView: View {
                 appleMusicStatusControl
             }
         }
-        .onAppear { position = Double(selection) }
+        .onAppear {
+            position = Double(selection)
+            snapToDeckTarget()
+        }
         .onChange(of: deckTarget?.persistentModelID) { _, _ in
             snapToDeckTarget()
         }
@@ -123,6 +130,7 @@ struct TurntableModeView: View {
             return
         }
         snap(to: index)
+        deckTarget = nil
     }
 
     // MARK: Record rendering
@@ -345,6 +353,7 @@ struct TurntableModeView: View {
     ) async {
         let tracks = record.sequencedTracks
         let clampedIndex = AppleMusicDeckPlayer.clampedTrackIndex(trackIndex, trackCount: tracks.count)
+        let localTrackTitles = tracks.map(\.title)
         isArmLifted = true
 
         if let albumID = record.appleMusicAlbumID {
@@ -352,8 +361,18 @@ struct TurntableModeView: View {
                 albumID: albumID,
                 startingAt: clampedIndex,
                 albumTitle: record.title,
+                localTrackTitles: localTrackTitles,
                 trackTitle: tracks[safe: clampedIndex]?.title
             )
+            if !deckPlayer.isPlaying, deckPlayer.errorMessage != nil {
+                record.appleMusicAlbumID = nil
+                try? modelContext.save()
+                await deckPlayer.loadAndPlay(
+                    record: record,
+                    startingAt: clampedIndex,
+                    modelContext: modelContext
+                )
+            }
         } else {
             await deckPlayer.loadAndPlay(record: record, startingAt: clampedIndex, modelContext: modelContext)
         }
