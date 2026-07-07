@@ -277,15 +277,19 @@ private struct DeckTickerDisplay: View {
 struct TonearmView: View {
     var angle: Double = -16
     var isLifted: Bool = false
+    /// True while the user has hold of the stylus — the arm then tracks the
+    /// finger near-instantly instead of easing on a soft spring.
+    var isEngaged: Bool = false
     private var isGrooveRiding: Bool = false
 
     @State private var grooveRideStartedAt: Date?
 
     private let pivotAnchor = UnitPoint(x: 0.69, y: 0.09)
 
-    init(angle: Double = -16, isLifted: Bool = false, isGrooveRiding: Bool = false) {
+    init(angle: Double = -16, isLifted: Bool = false, isEngaged: Bool = false, isGrooveRiding: Bool = false) {
         self.angle = angle
         self.isLifted = isLifted
+        self.isEngaged = isEngaged
         self.isGrooveRiding = isGrooveRiding
     }
 
@@ -304,10 +308,14 @@ struct TonearmView: View {
         }
         .rotationEffect(.degrees(angle), anchor: pivotAnchor)
         .offset(y: isLifted ? -4 : 0)
-        .animation(.spring(response: 0.42, dampingFraction: 0.7), value: angle)
+        .animation(
+            isEngaged
+                ? .interactiveSpring(response: 0.12, dampingFraction: 0.86)
+                : .spring(response: 0.42, dampingFraction: 0.7),
+            value: angle
+        )
         .animation(.spring(response: 0.42, dampingFraction: 0.7), value: isLifted)
         .frame(width: 344, height: 236)
-        .contentShape(TonearmHitShape())
         .onAppear {
             grooveRideStartedAt = isGrooveRiding ? Date() : nil
         }
@@ -388,25 +396,6 @@ struct TonearmView: View {
         }
     }
 
-    private struct TonearmHitShape: Shape {
-        func path(in rect: CGRect) -> Path {
-            var path = Path()
-            let pivot = CGPoint(x: rect.midX + 66, y: rect.midY - 96)
-            let elbow = CGPoint(x: rect.midX + 44, y: rect.midY + 6)
-            let tip = CGPoint(x: rect.midX - 24, y: rect.midY + 40)
-            let radius: CGFloat = 13
-            let tipRadius: CGFloat = 11
-
-            path.move(to: CGPoint(x: pivot.x - radius, y: pivot.y - radius))
-            path.addLine(to: CGPoint(x: pivot.x + radius, y: pivot.y - radius))
-            path.addLine(to: CGPoint(x: elbow.x + radius, y: elbow.y))
-            path.addLine(to: CGPoint(x: tip.x + tipRadius, y: tip.y + tipRadius))
-            path.addLine(to: CGPoint(x: tip.x - tipRadius, y: tip.y + tipRadius))
-            path.addLine(to: CGPoint(x: elbow.x - radius, y: elbow.y))
-            path.closeSubpath()
-            return path
-        }
-    }
 }
 
 #Preview("Deck with tonearm", traits: .sizeThatFitsLayout) {

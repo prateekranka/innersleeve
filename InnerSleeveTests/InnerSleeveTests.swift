@@ -1160,6 +1160,33 @@ extension InnerSleeveSerializedTests {
             #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(progress: 0.5, trackCount: 1) == 0)
             #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(progress: 1, trackCount: 1) == 0)
         }
+
+        @Test func seekSecondsLandsInsideTheCuedTrack() {
+            // Total 300s; progress 0.5 targets 150s, which is 30s into track 3.
+            let durations = [60, 60, 180]
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: durations) == 30)
+            #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(progress: 0.5, trackDurations: durations) == 2)
+        }
+
+        @Test func seekSecondsIsZeroAtTheOuterGroove() {
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0, trackDurations: [60, 60, 180]) == 0)
+        }
+
+        @Test func seekSecondsSnapsNearTrackStartsToZero() {
+            // Progress 0.502 of [200, 200] lands 0.8s into track 2: clean start.
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.502, trackDurations: [200, 200]) == 0)
+        }
+
+        @Test func seekSecondsClampsInsideTheLastTrack() {
+            let offset = AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 1, trackDurations: [60, 60])
+            #expect(offset <= 59)
+            #expect(offset >= 0)
+        }
+
+        @Test func seekSecondsFallsBackToZeroForMissingDurations() {
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: []) == 0)
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: [60, 0, 120]) == 0)
+        }
     }
 }
 
@@ -1365,6 +1392,99 @@ extension InnerSleeveSerializedTests {
             #expect(first == second)
             #expect(TonearmPlaybackMotion.verticalOffset(playbackTime: 37.25, isPlaying: true) == first.verticalOffset)
             #expect(TonearmPlaybackMotion.headshellRotationDegrees(playbackTime: 37.25, isPlaying: true) == first.headshellRotationDegrees)
+        }
+
+        // MARK: Direct-manipulation geometry
+
+        @Test func tipPointAtOuterGrooveMatchesRestTipOffset() {
+            let tip = TonearmMath.tipPoint(angle: 0, deckCenter: .zero)
+
+            #expect(abs(tip.x - TonearmMath.restTipOffset.dx) < 0.001)
+            #expect(abs(tip.y - TonearmMath.restTipOffset.dy) < 0.001)
+        }
+
+        @Test func tipStaysAtConstantRadiusFromPivotAcrossSweep() {
+            let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
+            let restRadius = hypot(
+                TonearmMath.restTipOffset.dx - TonearmMath.pivotOffset.dx,
+                TonearmMath.restTipOffset.dy - TonearmMath.pivotOffset.dy
+            )
+            for angle in stride(from: -16.0, through: 14.0, by: 2.0) {
+                let tip = TonearmMath.tipPoint(angle: angle, deckCenter: .zero)
+                let radius = hypot(tip.x - pivot.x, tip.y - pivot.y)
+                #expect(abs(radius - restRadius) < 0.001)
+            }
+        }
+
+        @Test func fingerAngleMeasuresPolarAngleFromPivot() {
+            let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
+            let right = CGPoint(x: pivot.x + 100, y: pivot.y)
+            let below = CGPoint(x: pivot.x, y: pivot.y + 100)
+
+            #expect(abs(TonearmMath.fingerAngle(at: right, deckCenter: .zero)) < 0.001)
+            #expect(abs(TonearmMath.fingerAngle(at: below, deckCenter: .zero) - 90) < 0.001)
+        }
+
+        @Test func normalizedDeltaWrapsIntoHalfTurnRange() {
+            #expect(TonearmMath.normalizedDeltaDegrees(0) == 0)
+            #expect(TonearmMath.normalizedDeltaDegrees(190) == -170)
+            #expect(TonearmMath.normalizedDeltaDegrees(-190) == 170)
+            #expect(TonearmMath.normalizedDeltaDegrees(180) == 180)
+            #expect(TonearmMath.normalizedDeltaDegrees(-180) == 180)
+            #expect(TonearmMath.normalizedDeltaDegrees(540) == 180)
+        }
+
+        @Test func draggingTheTipSwingsTheArmOneToOne() {
+            let start = TonearmMath.tipPoint(angle: -16, deckCenter: .zero)
+            let target = TonearmMath.tipPoint(angle: 7, deckCenter: .zero)
+
+            let angle = TonearmMath.draggedAngle(
+                startArmAngle: -16,
+                startLocation: start,
+                currentLocation: target,
+                deckCenter: .zero
+            )
+
+            #expect(abs(angle - 7) < 0.001)
+        }
+
+        @Test func draggingBeyondTheGroovesClampsToPhysicalRange() {
+            let start = TonearmMath.tipPoint(angle: 0, deckCenter: .zero)
+            let farInward = TonearmMath.tipPoint(angle: 40, deckCenter: .zero)
+            let farOutward = TonearmMath.tipPoint(angle: -60, deckCenter: .zero)
+
+            let inward = TonearmMath.draggedAngle(
+                startArmAngle: 0,
+                startLocation: start,
+                currentLocation: farInward,
+                deckCenter: .zero
+            )
+            let outward = TonearmMath.draggedAngle(
+                startArmAngle: 0,
+                startLocation: start,
+                currentLocation: farOutward,
+                deckCenter: .zero
+            )
+
+            #expect(inward == TonearmMath.innerGrooveAngle)
+            #expect(outward == TonearmMath.restAngle)
+        }
+
+        @Test func grabbingMidArmTracksTheSameAngularDelta() {
+            let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
+            func midArm(_ angle: Double) -> CGPoint {
+                let tip = TonearmMath.tipPoint(angle: angle, deckCenter: .zero)
+                return CGPoint(x: pivot.x + (tip.x - pivot.x) / 2, y: pivot.y + (tip.y - pivot.y) / 2)
+            }
+
+            let angle = TonearmMath.draggedAngle(
+                startArmAngle: 0,
+                startLocation: midArm(0),
+                currentLocation: midArm(10),
+                deckCenter: .zero
+            )
+
+            #expect(abs(angle - 10) < 0.001)
         }
     }
 }

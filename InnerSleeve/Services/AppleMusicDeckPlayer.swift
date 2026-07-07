@@ -86,7 +86,12 @@ final class AppleMusicDeckPlayer {
     /// If `appleMusicAlbumID` is already cached on the record, playback
     /// starts immediately. Otherwise the catalog is searched and the
     /// result is persisted before playing.
-    func loadAndPlay(record: Record, startingAt trackIndex: Int = 0, modelContext: ModelContext) async {
+    func loadAndPlay(
+        record: Record,
+        startingAt trackIndex: Int = 0,
+        seekToSeconds: Double = 0,
+        modelContext: ModelContext
+    ) async {
         errorMessage = nil
         isLoading = true
         loadingMessage = "Finding on Apple Music…"
@@ -110,6 +115,7 @@ final class AppleMusicDeckPlayer {
             await play(
                 albumID: cachedID,
                 startingAt: clampedTrackIndex,
+                seekToSeconds: seekToSeconds,
                 albumTitle: record.title,
                 trackTitle: track?.title
             )
@@ -141,16 +147,20 @@ final class AppleMusicDeckPlayer {
         await play(
             albumID: albumID,
             startingAt: clampedTrackIndex,
+            seekToSeconds: seekToSeconds,
             albumTitle: record.title,
             trackTitle: track?.title
         )
     }
 
     /// Play the album identified by `albumID`, optionally starting at a
-    /// different track index (0-based, from the catalog track list order).
+    /// different track index (0-based, from the catalog track list order)
+    /// and seeking part-way into that track — how a stylus dropped
+    /// mid-groove behaves.
     func play(
         albumID: String,
         startingAt trackIndex: Int = 0,
+        seekToSeconds: Double = 0,
         albumTitle: String? = nil,
         trackTitle: String? = nil
     ) async {
@@ -183,6 +193,9 @@ final class AppleMusicDeckPlayer {
             player.queue = ApplicationMusicPlayer.Queue(album: albumWithTracks, startingAt: startTrack)
 
             try await player.play()
+            if seekToSeconds > 1 {
+                player.playbackTime = seekToSeconds
+            }
             currentAlbumID = albumID
             currentAlbumTitle = albumTitle ?? album.title
             currentTrackTitle = trackTitle ?? startTrack.title
@@ -265,6 +278,28 @@ final class AppleMusicDeckPlayer {
         }
 
         return trackDurations.count - 1
+    }
+
+    /// Seconds into the cued track (per `stylusCueTrackIndex`) that the given
+    /// stylus progress lands on, so playback starts from that portion of the
+    /// record rather than the top of the track.
+    ///
+    /// Returns 0 when durations are unknown, and snaps drops within the
+    /// first two seconds of a track to a clean track start.
+    nonisolated static func stylusCueSeekSeconds(progress: Double, trackDurations: [Int]) -> Double {
+        guard !trackDurations.isEmpty, trackDurations.allSatisfy({ $0 > 0 }) else { return 0 }
+
+        let clamped = min(max(progress, 0), 1)
+        let totalDuration = trackDurations.reduce(0, +)
+        let targetTime = clamped * Double(totalDuration)
+        let index = stylusCueTrackIndex(progress: progress, trackDurations: trackDurations)
+        let elapsedBefore = trackDurations.prefix(index).reduce(0, +)
+
+        let offset = min(
+            max(targetTime - Double(elapsedBefore), 0),
+            Double(trackDurations[index] - 1)
+        )
+        return offset < 2 ? 0 : offset
     }
 
     nonisolated static func deckTickerText(albumTitle: String?, trackTitle: String?) -> String {

@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Pure math for tonearm angle ↔ progress ↔ track mapping.
 /// No UI state; safe for tests and previews.
@@ -73,5 +74,60 @@ enum TonearmMath {
         return outerGrooveAngle
             + (Double(clampedIndex) / Double(trackCount - 1))
             * (innerGrooveAngle - outerGrooveAngle)
+    }
+
+    // MARK: - Deck geometry (direct manipulation)
+
+    /// Tonearm pivot, relative to the deck center, in the deck's 344×236 layout.
+    static let pivotOffset = CGVector(dx: 66, dy: -96)
+
+    /// Stylus tip at angle 0 (outer groove), relative to the deck center.
+    static let restTipOffset = CGVector(dx: -24, dy: 40)
+
+    static func pivotPoint(deckCenter: CGPoint) -> CGPoint {
+        CGPoint(x: deckCenter.x + pivotOffset.dx, y: deckCenter.y + pivotOffset.dy)
+    }
+
+    /// On-screen stylus tip for a given arm angle. The tip vector is the
+    /// angle-0 tip rotated around the pivot (clockwise-positive, y-down).
+    static func tipPoint(angle: Double, deckCenter: CGPoint) -> CGPoint {
+        let pivot = pivotPoint(deckCenter: deckCenter)
+        let vx = deckCenter.x + restTipOffset.dx - pivot.x
+        let vy = deckCenter.y + restTipOffset.dy - pivot.y
+        let radians = angle * .pi / 180
+        return CGPoint(
+            x: pivot.x + vx * cos(radians) - vy * sin(radians),
+            y: pivot.y + vx * sin(radians) + vy * cos(radians)
+        )
+    }
+
+    /// Polar angle (degrees) of a touch point as seen from the pivot.
+    static func fingerAngle(at location: CGPoint, deckCenter: CGPoint) -> Double {
+        let pivot = pivotPoint(deckCenter: deckCenter)
+        return atan2(location.y - pivot.y, location.x - pivot.x) * 180 / .pi
+    }
+
+    /// Wrap an angle delta into (-180, 180] so drags never jump a full turn.
+    static func normalizedDeltaDegrees(_ delta: Double) -> Double {
+        var value = delta.truncatingRemainder(dividingBy: 360)
+        if value > 180 { value -= 360 }
+        if value <= -180 { value += 360 }
+        return value
+    }
+
+    /// Direct-manipulation drag: the arm swings exactly as far around the
+    /// pivot as the finger does, from wherever it was grabbed. Clamped to
+    /// the physical range so the arm never leaves the deck.
+    static func draggedAngle(
+        startArmAngle: Double,
+        startLocation: CGPoint,
+        currentLocation: CGPoint,
+        deckCenter: CGPoint
+    ) -> Double {
+        let delta = normalizedDeltaDegrees(
+            fingerAngle(at: currentLocation, deckCenter: deckCenter)
+                - fingerAngle(at: startLocation, deckCenter: deckCenter)
+        )
+        return clampedAngle(startArmAngle + delta)
     }
 }
