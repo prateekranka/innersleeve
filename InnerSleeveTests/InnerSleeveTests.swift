@@ -1470,6 +1470,68 @@ extension InnerSleeveSerializedTests {
             #expect(outward == TonearmMath.restAngle)
         }
 
+        // MARK: Groove donut
+
+        @Test func stylusRadiusDecreasesMonotonicallyAcrossTheSweep() {
+            var previous = Double.infinity
+            for angle in stride(from: -16.0, through: 14.0, by: 0.5) {
+                let radius = TonearmMath.stylusRadius(at: angle)
+                #expect(radius < previous)
+                previous = radius
+            }
+        }
+
+        @Test func grooveProgressIsNilOffTheRecordAndOverTheLabel() {
+            // Rest: stylus is outside the record edge.
+            #expect(TonearmMath.stylusRadius(at: TonearmMath.restAngle) > TonearmMath.recordEdgeRadius)
+            #expect(TonearmMath.grooveProgress(at: TonearmMath.restAngle) == nil)
+            // Fully swung in: stylus is over the label sticker.
+            #expect(TonearmMath.isOverLabel(at: TonearmMath.innerGrooveAngle))
+            #expect(TonearmMath.grooveProgress(at: TonearmMath.innerGrooveAngle) == nil)
+        }
+
+        @Test func grooveProgressSpansZeroToOneAcrossThePlayableBand() {
+            let outerAngle = TonearmMath.angle(forGrooveProgress: 0)
+            let innerAngle = TonearmMath.angle(forGrooveProgress: 1)
+
+            #expect(abs((TonearmMath.grooveProgress(at: outerAngle) ?? -1) - 0) < 0.01)
+            #expect(abs((TonearmMath.grooveProgress(at: innerAngle) ?? -1) - 1) < 0.01)
+            #expect(outerAngle < innerAngle)
+        }
+
+        @Test func grooveProgressIsMonotonicWithinTheBand() {
+            let outerAngle = TonearmMath.angle(forGrooveProgress: 0)
+            let innerAngle = TonearmMath.angle(forGrooveProgress: 1)
+            var previous = -1.0
+            for angle in stride(from: outerAngle + 0.01, through: innerAngle - 0.01, by: 0.25) {
+                guard let progress = TonearmMath.grooveProgress(at: angle) else {
+                    Issue.record("expected playable groove at \(angle)")
+                    return
+                }
+                #expect(progress > previous)
+                previous = progress
+            }
+        }
+
+        @Test func angleForGrooveProgressRoundTrips() {
+            for progress in stride(from: 0.0, through: 1.0, by: 0.1) {
+                let angle = TonearmMath.angle(forGrooveProgress: progress)
+                let recovered = TonearmMath.grooveProgress(at: angle)
+                #expect(recovered != nil)
+                #expect(abs((recovered ?? -1) - progress) < 0.01)
+            }
+        }
+
+        @Test func leadInEdgeStillCountsAsTrackOne() {
+            // Dropping between the record edge and the first groove snaps
+            // to progress 0 rather than rejecting the drop.
+            let outerAngle = TonearmMath.angle(forGrooveProgress: 0)
+            let leadInAngle = outerAngle - 0.8
+            if TonearmMath.stylusRadius(at: leadInAngle) <= TonearmMath.recordEdgeRadius {
+                #expect(TonearmMath.grooveProgress(at: leadInAngle) == 0)
+            }
+        }
+
         @Test func grabbingMidArmTracksTheSameAngularDelta() {
             let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
             func midArm(_ angle: Double) -> CGPoint {

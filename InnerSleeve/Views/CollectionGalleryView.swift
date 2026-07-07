@@ -4,6 +4,7 @@ import SwiftData
 /// The first screen: a draggable 3D shelf of records on a pale grey stage.
 struct CollectionGalleryView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
     @Query private var allRecords: [Record]
     @State private var selection: Int = 0
     @State private var detailRecord: Record? = nil
@@ -137,6 +138,16 @@ struct CollectionGalleryView: View {
         }
         .onChange(of: records.map(\.persistentModelID)) { _, _ in
             applyPendingSelection()
+        }
+        .task {
+            // Records saved without Side A/B track lists (older additions,
+            // failed lookups) get them fetched from the catalog.
+            guard let settings else { return }
+            await TrackListBackfill.shared.backfillMissingTracks(
+                in: allRecords,
+                lookup: settings.makeLookupService(),
+                modelContext: modelContext
+            )
         }
     }
 

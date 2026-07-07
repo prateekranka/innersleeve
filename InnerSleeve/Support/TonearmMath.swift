@@ -115,6 +115,62 @@ enum TonearmMath {
         return value
     }
 
+    // MARK: - Groove donut (where the record actually plays)
+
+    /// Record (platter) center relative to the deck center.
+    static let platterCenterOffset = CGVector(dx: -52, dy: 0)
+
+    /// Physical edge of the 172pt record on the platter.
+    static let recordEdgeRadius: Double = 86
+
+    /// Outermost playable groove (inside the lead-in edge).
+    static let grooveOuterRadius: Double = 82
+
+    /// Innermost playable groove — the edge of the center label sticker.
+    /// The label itself (RecordDiscView draws it at 0.37 × disc) is not playable.
+    static let grooveInnerRadius: Double = 35
+
+    /// Distance from the stylus tip to the record center for a given arm
+    /// angle. Translation-invariant, so computed around a zero deck center.
+    static func stylusRadius(at angle: Double) -> Double {
+        let tip = tipPoint(angle: angle, deckCenter: .zero)
+        return hypot(tip.x - platterCenterOffset.dx, tip.y - platterCenterOffset.dy)
+    }
+
+    /// Where in the grooved donut the stylus sits: 0 at the outer groove,
+    /// 1 at the label edge. Returns nil off the record or over the label
+    /// sticker — the needle only plays where the ridges are.
+    static func grooveProgress(at angle: Double) -> Double? {
+        let radius = stylusRadius(at: angle)
+        guard radius <= recordEdgeRadius, radius >= grooveInnerRadius else { return nil }
+        let clamped = min(max(radius, grooveInnerRadius), grooveOuterRadius)
+        return (grooveOuterRadius - clamped) / (grooveOuterRadius - grooveInnerRadius)
+    }
+
+    /// Whether a dropped stylus at this angle sits over the label sticker.
+    static func isOverLabel(at angle: Double) -> Bool {
+        stylusRadius(at: angle) < grooveInnerRadius
+    }
+
+    /// Inverse of `grooveProgress`: the arm angle whose stylus lands at the
+    /// given progress through the groove band. `stylusRadius` decreases
+    /// monotonically across the sweep, so a bisection converges fast.
+    static func angle(forGrooveProgress progress: Double) -> Double {
+        let clamped = min(max(progress, 0), 1)
+        let targetRadius = grooveOuterRadius - clamped * (grooveOuterRadius - grooveInnerRadius)
+        var low = restAngle
+        var high = innerGrooveAngle
+        for _ in 0..<40 {
+            let mid = (low + high) / 2
+            if stylusRadius(at: mid) > targetRadius {
+                low = mid
+            } else {
+                high = mid
+            }
+        }
+        return (low + high) / 2
+    }
+
     /// Direct-manipulation drag: the arm swings exactly as far around the
     /// pivot as the finger does, from wherever it was grabbed. Clamped to
     /// the physical range so the arm never leaves the deck.

@@ -109,13 +109,12 @@ struct TurntableModeView: View {
 
                         // Invisible grab zone riding on the stylus tip: pick the
                         // arm up here and swing it anywhere on (or off) the record.
-                        Circle()
-                            .fill(Color.clear)
-                            .frame(width: 72, height: 72)
+                        Color.clear
+                            .frame(width: 88, height: 88)
                             .contentShape(Circle())
                             .position(TonearmMath.tipPoint(angle: armAngle, deckCenter: deckCenter))
                             .zIndex(40)
-                            .gesture(tonearmDragGesture(deckCenter: deckCenter))
+                            .highPriorityGesture(tonearmDragGesture(deckCenter: deckCenter))
                             .accessibilityLabel("Tonearm stylus")
                             .accessibilityHint("Drag onto the record to play from that spot, or back to the arm rest to lift it off")
                     }
@@ -314,19 +313,19 @@ struct TurntableModeView: View {
                 let finalAngle = TonearmMath.clampedAngle(armAngle)
                 armAngle = finalAngle
 
-                if TonearmMath.isOnRecord(finalAngle), let record = currentRecord {
-                    let progress = TonearmMath.cueProgress(from: finalAngle)
+                if let progress = TonearmMath.grooveProgress(at: finalAngle), let record = currentRecord {
                     let trackIndex = AppleMusicDeckPlayer.stylusCueTrackIndex(
-                        progress: progress ?? 0,
+                        progress: progress,
                         trackDurations: record.sequencedTracks.map(\.duration)
                     )
                     Task {
                         await play(record, startingAt: trackIndex, source: .stylusDrop, cueProgress: progress)
                     }
                 } else {
-                    // Dropped back on the arm rest: the needle is off the
-                    // record so the music stops, but the platter keeps
-                    // spinning until the deck's stop button is pressed.
+                    // Off the grooved donut: either back on the arm rest or
+                    // over the center label sticker, where a needle can't
+                    // play. The music stops but the platter keeps spinning
+                    // until the deck's stop button is pressed.
                     parkStylus()
                 }
             }
@@ -402,9 +401,12 @@ struct TurntableModeView: View {
             armState = .play
             isPlatterSpinning = true
             if source != .stylusDrop {
-                // Auto-plays settle the arm on the track's groove. A stylus
-                // drop stays exactly where the user placed it.
-                let targetAngle = TonearmMath.playbackAngle(trackIndex: clampedIndex, trackCount: tracks.count)
+                // Auto-plays settle the arm on the track's groove within the
+                // playable donut. A stylus drop stays where the user placed it.
+                let trackProgress = tracks.count > 1
+                    ? Double(clampedIndex) / Double(tracks.count - 1)
+                    : 0
+                let targetAngle = TonearmMath.angle(forGrooveProgress: trackProgress)
                 withAnimation(.spring(response: 0.6, dampingFraction: 0.65)) {
                     armAngle = TonearmMath.clampedAngle(targetAngle)
                 }

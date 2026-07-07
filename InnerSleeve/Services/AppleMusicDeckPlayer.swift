@@ -71,6 +71,11 @@ final class AppleMusicDeckPlayer {
     private let player = ApplicationMusicPlayer.shared
     private var albumIDCache: [PersistentIdentifier: String] = [:]
 
+    /// Last catalog album loaded with its tracks, so re-dropping the stylus
+    /// on the same record re-queues instantly instead of re-fetching.
+    private var loadedAlbumID: String?
+    private var loadedAlbum: MusicKit.Album?
+
     // MARK: Public API
 
     /// Request Media & Apple Music authorization if not yet determined.
@@ -171,16 +176,24 @@ final class AppleMusicDeckPlayer {
         defer { isLoading = false }
 
         do {
-            var request = MusicCatalogResourceRequest<MusicKit.Album>(matching: \.id, equalTo: MusicItemID(albumID))
-            request.limit = 1
-            let response = try await request.response()
+            let albumWithTracks: MusicKit.Album
+            if let loadedAlbum, loadedAlbumID == albumID {
+                albumWithTracks = loadedAlbum
+            } else {
+                var request = MusicCatalogResourceRequest<MusicKit.Album>(matching: \.id, equalTo: MusicItemID(albumID))
+                request.limit = 1
+                let response = try await request.response()
 
-            guard let album = response.items.first else {
-                errorMessage = "Album unavailable"
-                return
+                guard let album = response.items.first else {
+                    errorMessage = "Album unavailable"
+                    return
+                }
+
+                albumWithTracks = try await album.with(.tracks)
+                loadedAlbum = albumWithTracks
+                loadedAlbumID = albumID
             }
 
-            let albumWithTracks = try await album.with(.tracks)
             let tracks = Array(albumWithTracks.tracks ?? MusicItemCollection<MusicKit.Track>([]))
             guard !tracks.isEmpty else {
                 errorMessage = "Album has no tracks"
