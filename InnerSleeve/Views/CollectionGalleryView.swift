@@ -14,7 +14,6 @@ struct CollectionGalleryView: View {
     @State private var deleteRecord: Record? = nil
     @State private var pendingSelectionID: PersistentIdentifier?
     @State private var shelfMode: ShelfMode = .carousel
-    @State private var relightMode = false
     var onPutOnDeck: (Record) -> Void = { _ in }
 
     private var records: [Record] {
@@ -41,27 +40,18 @@ struct CollectionGalleryView: View {
 
                     switch shelfMode {
                     case .carousel:
-                        ZStack {
-                            DepthCarouselView(
-                                items: records,
-                                selection: $selection,
-                                discDiameter: 340,
-                                onHeroTap: { detailRecord = $0 }
-                            ) { record, isSelected in
-                                RecordDiscView(record: record, glossStrength: isSelected ? 1.0 : 0.5)
-                                    .contextMenu {
-                                        if isSelected {
-                                            recordContextMenu(for: record)
-                                        }
+                        DepthCarouselView(
+                            items: records,
+                            selection: $selection,
+                            discDiameter: 340,
+                            onHeroTap: { detailRecord = $0 }
+                        ) { record, isSelected in
+                            RecordDiscView(record: record, glossStrength: isSelected ? 1.0 : 0.5)
+                                .contextMenu {
+                                    if isSelected {
+                                        recordContextMenu(for: record)
                                     }
-                            }
-
-                            if relightMode {
-                                StageLightControl()
-                                    .frame(width: 340, height: 340)
-                                    .transition(.scale(scale: 0.92).combined(with: .opacity))
-                                    .zIndex(10)
-                            }
+                                }
                         }
                         .frame(height: 420)
                         .frame(maxHeight: .infinity, alignment: .center)
@@ -247,11 +237,6 @@ struct CollectionGalleryView: View {
             }
 
         }
-        .overlay(alignment: .trailing) {
-            if shelfMode == .carousel {
-                relightButton
-            }
-        }
         .padding(.horizontal, 36)
         .animation(.easeInOut(duration: 0.22), value: selection)
     }
@@ -310,30 +295,6 @@ struct CollectionGalleryView: View {
         }
     }
 
-    @ViewBuilder
-    private var relightButton: some View {
-        let button = Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                relightMode.toggle()
-            }
-        } label: {
-            Image(systemName: relightMode ? "sun.max.fill" : "sun.max")
-                .font(.system(size: 12, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .accessibilityLabel(relightMode ? "Hide relight control" : "Relight records")
-        .offset(x: 10, y: -2)
-
-        if relightMode {
-            button
-                .buttonStyle(.glassProminent)
-                .tint(Palette.warmYellow)
-        } else {
-            button
-                .buttonStyle(.glass)
-                .tint(Palette.inkOnStage)
-        }
-    }
 }
 
 private enum ShelfMode {
