@@ -17,8 +17,8 @@
     {
       "format": "12\" Vinyl",
       "tracks": [
-        { "position": "A1", "title": "First Fixture", "length": 184000 },
-        { "position": "A2", "title": "Second Fixture", "length": 201000 },
+        { "position": 1, "number": "A1", "title": "First Fixture", "length": 184000 },
+        { "position": 2, "number": "A2", "title": "Second Fixture", "recording": { "title": "Second Fixture", "length": 201000 } },
         { "position": "B1", "title": "Third Fixture", "length": 242000 }
       ]
     }
