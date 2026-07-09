@@ -208,7 +208,7 @@ private struct DeckStopButton: View {
                 .frame(width: 5, height: 5)
                 .shadow(color: isPlaying ? Palette.amberDisplay.opacity(0.6) : .clear, radius: 3)
         }
-        .offset(x: 128, y: 90)
+        .offset(x: 128, y: 58)
     }
 }
 
@@ -219,9 +219,9 @@ private struct DeckTickerDisplay: View {
 
     @State private var startDate = Date()
 
-    private let displayWidth: CGFloat = 300
-    private let scrollSpeed: CGFloat = 30
-    private let gapText = "     •     "
+    private let displayWidth: CGFloat = 326
+    private let scrollSpeed: CGFloat = 32
+    private let gapText = "  •  "
     private let font = UIFont.monospacedSystemFont(ofSize: 8.5, weight: .medium)
 
     private var measuredWidth: CGFloat {
@@ -241,8 +241,10 @@ private struct DeckTickerDisplay: View {
             && displayText != "Queue empty"
 
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldScroll)) { context in
-            let repeatedText = shouldScroll ? "\(displayText)\(gapText)\(displayText)" : displayText
-            let singleTravel = max(measuredWidth, displayWidth) + gapWidth
+            let repeatedText = shouldScroll
+                ? Array(repeating: displayText, count: 8).joined(separator: gapText)
+                : displayText
+            let singleTravel = measuredWidth + gapWidth
             let cycle = singleTravel / scrollSpeed
             let elapsed = max(0, context.date.timeIntervalSince(startDate) - 1.0)
             let progress = shouldScroll ? elapsed.truncatingRemainder(dividingBy: cycle) / cycle : 0

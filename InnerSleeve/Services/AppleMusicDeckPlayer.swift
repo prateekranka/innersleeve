@@ -200,7 +200,12 @@ final class AppleMusicDeckPlayer {
                 isPlaying = false
                 return
             }
-            let clampedIndex = min(max(trackIndex, 0), max(tracks.count - 1, 0))
+            let requestedIndex = min(max(trackIndex, 0), max(tracks.count - 1, 0))
+            let clampedIndex = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: trackTitle,
+                requestedIndex: requestedIndex,
+                appleMusicTrackTitles: tracks.map(\.title)
+            )
 
             let startTrack = tracks[clampedIndex]
             player.queue = ApplicationMusicPlayer.Queue(album: albumWithTracks, startingAt: startTrack)
@@ -210,7 +215,7 @@ final class AppleMusicDeckPlayer {
                 player.playbackTime = seekToSeconds
             }
             currentAlbumID = albumID
-            currentAlbumTitle = albumTitle ?? album.title
+            currentAlbumTitle = albumTitle ?? albumWithTracks.title
             currentTrackTitle = trackTitle ?? startTrack.title
             currentTrackIndex = clampedIndex
             isPlaying = true
@@ -332,6 +337,24 @@ final class AppleMusicDeckPlayer {
         return min(max(index, 0), trackCount - 1)
     }
 
+    nonisolated static func mappedCatalogTrackIndex(
+        localTrackTitle: String?,
+        requestedIndex: Int,
+        appleMusicTrackTitles: [String]
+    ) -> Int {
+        guard !appleMusicTrackTitles.isEmpty else { return 0 }
+        let fallback = clampedTrackIndex(requestedIndex, trackCount: appleMusicTrackTitles.count)
+        guard let localTrackTitle else { return fallback }
+        let normalizedLocal = normalizedTrackTitle(localTrackTitle)
+        guard !normalizedLocal.isEmpty else { return fallback }
+
+        if let exactMatch = appleMusicTrackTitles.firstIndex(where: { normalizedTrackTitle($0) == normalizedLocal }) {
+            return exactMatch
+        }
+
+        return fallback
+    }
+
     /// Picks the best album match for a record's artist and title.
     ///
     /// Uses a simple case-insensitive word-overlap score on artist and title.
@@ -380,6 +403,22 @@ final class AppleMusicDeckPlayer {
             return "Apple Music setup needed"
         }
         return "Apple Music lookup failed"
+    }
+
+    private nonisolated static func normalizedTrackTitle(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+            .map { character in
+                character.isLetter || character.isNumber ? character : " "
+            }
+            .reduce(into: "") { result, character in
+                if character == " ", result.last == " " {
+                    return
+                }
+                result.append(character)
+            }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

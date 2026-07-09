@@ -177,6 +177,20 @@ extension InnerSleeveSerializedTests {
             #expect(assigned.map(\.number) == [1, 2, 3, 1, 2])
         }
 
+        @Test func sideParserRenumbersMarkedTracksPerSide() {
+            let tracks = [
+                TrackCandidate(side: .a, number: 1, title: "A One"),
+                TrackCandidate(side: .a, number: 7, title: "A Two"),
+                TrackCandidate(side: .b, number: 9, title: "B One"),
+                TrackCandidate(side: .b, number: 10, title: "B Two"),
+            ]
+
+            let assigned = ReleaseSideParser.assignSidesIfMissing(tracks)
+
+            #expect(assigned.map(\.side) == [.a, .a, .b, .b])
+            #expect(assigned.map(\.number) == [1, 2, 1, 2])
+        }
+
         @Test func musicBrainzTextQueryUsesArtistReleaseSplits() {
             let query = ReleaseSearchTuning.musicBrainzQuery(for: "kind of blue miles davis")
 
@@ -325,6 +339,96 @@ extension InnerSleeveSerializedTests {
             #expect(record.tracks.count == 2)
             #expect(record.tracksSideA.first?.title == "A Song")
             #expect(record.tracksSideB.first?.duration == 120)
+        }
+
+        @MainActor
+        @Test func recordDraftCandidateSplitsNumericCatalogTracksIntoSides() {
+            let candidate = ReleaseCandidate(
+                id: "mb:numeric",
+                artist: "Khruangbin",
+                title: "Con todo el mundo",
+                year: 2018,
+                label: "Dead Oceans",
+                catalogNumber: nil,
+                format: "Digital Media",
+                country: "XW",
+                barcode: nil,
+                coverArtURL: nil,
+                tracks: [
+                    TrackCandidate(side: nil, number: 1, title: "One"),
+                    TrackCandidate(side: nil, number: 2, title: "Two"),
+                    TrackCandidate(side: nil, number: 3, title: "Three"),
+                    TrackCandidate(side: nil, number: 4, title: "Four"),
+                ]
+            )
+
+            let draft = RecordDraft(candidate: candidate)
+
+            #expect(draft.tracks.map(\.side) == [.a, .a, .b, .b])
+            #expect(draft.tracks.map(\.number) == [1, 2, 1, 2])
+        }
+
+        @MainActor
+        @Test func knownBackfillAddsThrillerSidesWithoutCatalogLookup() async throws {
+            let store = try freshStore()
+            let record = Record(
+                artist: "Michael Jackson",
+                title: "Thriller",
+                releaseYear: 2016,
+                label: "MJJ Productions",
+                format: "12\" Vinyl",
+                pressingDescription: "XE · 12\" Vinyl",
+                artSeed: 77,
+                storageLocation: "Shelf"
+            )
+            store.context.insert(record)
+
+            await TrackListBackfill().backfill(
+                record: record,
+                lookup: FailingReleaseLookup(),
+                modelContext: store.context
+            )
+
+            #expect(record.tracksSideA.map(\.title) == [
+                "Wanna Be Startin’ Somethin’",
+                "Baby Be Mine",
+                "The Girl Is Mine",
+                "Thriller",
+            ])
+            #expect(record.tracksSideB.map(\.title) == [
+                "Beat It",
+                "Billie Jean",
+                "Human Nature",
+                "P.Y.T. (Pretty Young Thing)",
+                "The Lady in My Life",
+            ])
+        }
+
+        @MainActor
+        @Test func knownBackfillLeavesUserEditedTrackListsAlone() async throws {
+            let store = try freshStore()
+            let record = Record(
+                artist: "Khruangbin",
+                title: "Con todo el mundo",
+                releaseYear: 2018,
+                label: "Dead Oceans",
+                pressingDescription: "Digital Media",
+                artSeed: 78,
+                storageLocation: "Shelf"
+            )
+            record.tracks = [
+                Track(side: .a, trackNumber: 1, title: "My custom track", duration: 10),
+            ]
+            store.context.insert(record)
+
+            await TrackListBackfill().backfill(
+                record: record,
+                lookup: FailingReleaseLookup(),
+                modelContext: store.context
+            )
+
+            #expect(record.tracks.count == 1)
+            #expect(record.tracks.first?.title == "My custom track")
         }
 
         @MainActor
@@ -764,6 +868,20 @@ private struct StubReleaseLookupService: ReleaseLookupService {
 
     func details(for candidate: ReleaseCandidate) async throws -> ReleaseCandidate {
         candidate
+    }
+}
+
+private struct FailingReleaseLookup: ReleaseLookupService {
+    func search(text: String) async throws -> [ReleaseCandidate] {
+        throw ReleaseLookupError.notFound
+    }
+
+    func search(barcode: String) async throws -> [ReleaseCandidate] {
+        throw ReleaseLookupError.notFound
+    }
+
+    func details(for candidate: ReleaseCandidate) async throws -> ReleaseCandidate {
+        throw ReleaseLookupError.notFound
     }
 }
 
@@ -1229,6 +1347,34 @@ extension InnerSleeveSerializedTests {
             )
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: "Midnights", trackTitle: nil) == "Midnights")
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: nil, trackTitle: nil) == "No record on deck")
+        }
+
+        @Test func appleMusicTrackMappingUsesNormalizedLocalTitle() {
+            let index = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Como me quieres",
+                requestedIndex: 4,
+                appleMusicTrackTitles: [
+                    "Cómo me quieres",
+                    "Lady and Man",
+                    "María también",
+                ]
+            )
+
+            #expect(index == 0)
+        }
+
+        @Test func appleMusicTrackMappingFallsBackToRequestedIndex() {
+            let index = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Not on this album",
+                requestedIndex: 2,
+                appleMusicTrackTitles: [
+                    "Beat It",
+                    "Billie Jean",
+                    "Human Nature",
+                ]
+            )
+
+            #expect(index == 2)
         }
     }
 }

@@ -130,6 +130,10 @@ enum TonearmMath {
     /// The label itself (RecordDiscView draws it at 0.37 × disc) is not playable.
     static let grooveInnerRadius: Double = 35
 
+    /// Floating-point tolerance for radius/angle inverse calculations at
+    /// exact groove boundaries.
+    private static let radiusEpsilon: Double = 0.001
+
     /// Distance from the stylus tip to the record center for a given arm
     /// angle. Translation-invariant, so computed around a zero deck center.
     static func stylusRadius(at angle: Double) -> Double {
@@ -142,7 +146,8 @@ enum TonearmMath {
     /// sticker — the needle only plays where the ridges are.
     static func grooveProgress(at angle: Double) -> Double? {
         let radius = stylusRadius(at: angle)
-        guard radius <= recordEdgeRadius, radius >= grooveInnerRadius else { return nil }
+        guard radius <= recordEdgeRadius + radiusEpsilon,
+              radius >= grooveInnerRadius - radiusEpsilon else { return nil }
         let clamped = min(max(radius, grooveInnerRadius), grooveOuterRadius)
         return (grooveOuterRadius - clamped) / (grooveOuterRadius - grooveInnerRadius)
     }

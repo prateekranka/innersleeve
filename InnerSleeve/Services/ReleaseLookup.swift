@@ -81,12 +81,27 @@ enum ReleaseSideParser {
     }
 
     static func assignSidesIfMissing(_ tracks: [TrackCandidate]) -> [TrackCandidate] {
-        guard tracks.contains(where: { $0.side == nil }) else { return tracks }
+        guard tracks.contains(where: { $0.side == nil }) else {
+            return renumberedBySide(tracks)
+        }
         let midpoint = Int(ceil(Double(tracks.count) / 2.0))
-        return tracks.enumerated().map { index, track in
+        let assigned = tracks.enumerated().map { index, track in
             var copy = track
             copy.side = index < midpoint ? .a : .b
             copy.number = index < midpoint ? index + 1 : index - midpoint + 1
+            return copy
+        }
+        return renumberedBySide(assigned)
+    }
+
+    private static func renumberedBySide(_ tracks: [TrackCandidate]) -> [TrackCandidate] {
+        var sideCounts: [RecordSide: Int] = [:]
+        return tracks.map { track in
+            guard let side = track.side else { return track }
+            var copy = track
+            let next = (sideCounts[side] ?? 0) + 1
+            sideCounts[side] = next
+            copy.number = next
             return copy
         }
     }
