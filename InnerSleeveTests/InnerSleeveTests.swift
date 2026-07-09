@@ -1860,6 +1860,61 @@ extension InnerSleeveSerializedTests {
             #expect(record.resolvedVinylSeed == 42)
         }
 
+        @Test func everyVinylStyleHasAUsableCuratedPalette() {
+            let palettes = VinylStyle.allCases.map { style in
+                let colors = Record.defaultVinylColors(for: style)
+                #expect(Color(hex: colors.primary) != nil)
+                #expect(Color(hex: colors.secondary) != nil)
+                #expect(!style.displayName.isEmpty)
+                #expect(!style.materialDescription.isEmpty)
+                return "\(colors.primary)|\(colors.secondary)"
+            }
+
+            #expect(Set(palettes).count == VinylStyle.allCases.count)
+        }
+
+        @Test func selectingAStyleAdoptsItsPaletteWhenCurrentColorsAreDefaults() {
+            let black = Record.defaultVinylColors(for: .black)
+            let starting = VinylLookValues(
+                style: .black,
+                primaryHex: black.primary,
+                secondaryHex: black.secondary,
+                seed: 19
+            )
+
+            let updated = VinylPaletteTransition.selecting(
+                .burst,
+                from: starting,
+                legacyAppearance: .black
+            )
+            let burst = Record.defaultVinylColors(for: .burst)
+
+            #expect(updated.style == .burst)
+            #expect(updated.primaryHex == burst.primary)
+            #expect(updated.secondaryHex == burst.secondary)
+            #expect(updated.seed == starting.seed)
+        }
+
+        @Test func selectingAStylePreservesCustomizedPigments() {
+            let starting = VinylLookValues(
+                style: .marble,
+                primaryHex: "#123456",
+                secondaryHex: "#ABCDEF",
+                seed: 77
+            )
+
+            let updated = VinylPaletteTransition.selecting(
+                .swirl,
+                from: starting,
+                legacyAppearance: .black
+            )
+
+            #expect(updated.style == .swirl)
+            #expect(updated.primaryHex == starting.primaryHex)
+            #expect(updated.secondaryHex == starting.secondaryHex)
+            #expect(updated.seed == starting.seed)
+        }
+
         @Test func patternGeometryIsDeterministicForSameSeed() {
             let first = VinylPatternGeometry.blobs(seed: 1234, count: 12)
             let second = VinylPatternGeometry.blobs(seed: 1234, count: 12)
@@ -1874,6 +1929,34 @@ extension InnerSleeveSerializedTests {
             let second = VinylPatternGeometry.rays(seed: 88, count: 10)
 
             #expect(first == second)
+        }
+
+        @Test func everyProceduralVinylStyleHasDeterministicSeededGeometry() {
+            for style in VinylStyle.allCases where style != .black {
+                let first = VinylPatternGeometry.signature(style: style, seed: 812, size: 260)
+                let second = VinylPatternGeometry.signature(style: style, seed: 812, size: 260)
+                let shuffled = VinylPatternGeometry.signature(style: style, seed: 813, size: 260)
+
+                #expect(first == second, "\(style.displayName) should be stable for a saved seed")
+                #expect(first != shuffled, "\(style.displayName) should visibly change after shuffle")
+                #expect(first.componentCount > 0)
+            }
+        }
+
+        @Test func vinylThumbnailGeometryIsCheaperThanHeroGeometry() {
+            for style in VinylStyle.allCases where style != .black {
+                let thumbnail = VinylPatternGeometry.signature(style: style, seed: 92, size: 56)
+                let hero = VinylPatternGeometry.signature(style: style, seed: 92, size: 260)
+
+                #expect(
+                    thumbnail.definingSamples == hero.definingSamples,
+                    "\(style.displayName) should preserve its defining geometry across render sizes"
+                )
+                #expect(
+                    thumbnail.componentCount < hero.componentCount,
+                    "\(style.displayName) should reduce detail in style-picker thumbnails"
+                )
+            }
         }
     }
 }

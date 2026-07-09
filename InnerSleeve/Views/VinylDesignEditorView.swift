@@ -37,6 +37,33 @@ struct VinylLookValues: Equatable {
     }
 }
 
+enum VinylPaletteTransition {
+    static func selecting(
+        _ style: VinylStyle,
+        from values: VinylLookValues,
+        legacyAppearance: VinylAppearance
+    ) -> VinylLookValues {
+        let previousDefaults = Record.defaultVinylColors(
+            for: values.style,
+            legacyAppearance: legacyAppearance
+        )
+        let nextDefaults = Record.defaultVinylColors(
+            for: style,
+            legacyAppearance: legacyAppearance
+        )
+        let isUsingPreviousDefaults = values.primaryHex == previousDefaults.primary
+            && values.secondaryHex == previousDefaults.secondary
+
+        var updated = values
+        updated.style = style
+        if isUsingPreviousDefaults {
+            updated.primaryHex = nextDefaults.primary
+            updated.secondaryHex = nextDefaults.secondary
+        }
+        return updated
+    }
+}
+
 struct VinylPreviewConfiguration {
     var artSeed: Int
     var artStyle: CoverArtStyle
@@ -112,6 +139,16 @@ struct VinylDesignEditorView: View {
                     .frame(width: 260, height: 260)
                     .padding(.top, 10)
 
+                    VStack(spacing: 4) {
+                        Text(values.style.displayName)
+                            .font(.headline)
+                        Text(values.style.materialDescription)
+                            .font(.caption)
+                            .foregroundStyle(Palette.inkOnStage.opacity(0.62))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 300)
+                    }
+
                     stylePicker
                     colorControls
 
@@ -123,7 +160,7 @@ struct VinylDesignEditorView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(Palette.orangeAccent)
-                    .disabled(values.style == .black || values.style == .translucent)
+                    .disabled(values.style == .black)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 30)
@@ -156,8 +193,11 @@ struct VinylDesignEditorView: View {
                     ForEach(VinylStyle.allCases, id: \.self) { style in
                         Button {
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                                values.style = style
-                                applyDefaultColorsIfNeeded(for: style)
+                                values = VinylPaletteTransition.selecting(
+                                    style,
+                                    from: values,
+                                    legacyAppearance: preview.appearance
+                                )
                             }
                         } label: {
                             VStack(spacing: 7) {
@@ -180,12 +220,13 @@ struct VinylDesignEditorView: View {
                                 .frame(width: 56, height: 56)
 
                                 Text(style.displayName)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.72)
+                                    .font(.caption2.weight(.medium))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .foregroundStyle(Palette.inkOnStage)
-                            .frame(width: 74)
+                            .frame(width: 86)
                             .padding(.vertical, 8)
                             .background {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -197,6 +238,7 @@ struct VinylDesignEditorView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(style == values.style ? .isSelected : [])
                     }
                 }
                 .padding(.vertical, 2)
@@ -210,20 +252,25 @@ struct VinylDesignEditorView: View {
         if values.style != .black {
             VStack(spacing: 12) {
                 ColorPicker(
-                    "Primary color",
+                    "Base vinyl",
                     selection: colorBinding(\.primaryHex),
                     supportsOpacity: false
                 )
 
                 if values.style.usesSecondaryColor {
                     ColorPicker(
-                        "Secondary color",
+                        "Suspended pigment",
                         selection: colorBinding(\.secondaryHex),
                         supportsOpacity: false
                     )
                 }
+
+                Button("Reset to style colors", action: resetToStyleColors)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.orangeAccent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .font(.system(size: 14, weight: .medium))
+            .font(.subheadline.weight(.medium))
             .padding(14)
             .background(Color.white.opacity(0.54), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -247,24 +294,32 @@ struct VinylDesignEditorView: View {
         return Record.defaultVinylColors(for: style, legacyAppearance: preview.appearance)
     }
 
-    private func applyDefaultColorsIfNeeded(for style: VinylStyle) {
-        let defaults = Record.defaultVinylColors(for: style, legacyAppearance: preview.appearance)
-        if values.primaryHex.isEmpty {
-            values.primaryHex = defaults.primary
-        }
-        if values.secondaryHex.isEmpty {
-            values.secondaryHex = defaults.secondary
-        }
+    private func resetToStyleColors() {
+        let defaults = Record.defaultVinylColors(
+            for: values.style,
+            legacyAppearance: preview.appearance
+        )
+        values.primaryHex = defaults.primary
+        values.secondaryHex = defaults.secondary
     }
 }
 
 private extension VinylStyle {
     var usesSecondaryColor: Bool {
         switch self {
-        case .black, .translucent, .smoke:
+        case .black, .translucent:
             return false
-        case .swirl, .marble, .pinwheel, .burst, .halo, .splatterMix:
+        case .swirl, .marble, .pinwheel, .burst, .halo, .splatterMix, .smoke:
             return true
         }
     }
+}
+
+#Preview("Record look editor") {
+    let record = FixtureData.makeProductionRecords()[0]
+    return VinylDesignEditorView(
+        values: VinylLookValues(record: record),
+        preview: VinylPreviewConfiguration(record: record),
+        onSave: { _ in }
+    )
 }
