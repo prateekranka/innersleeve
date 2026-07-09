@@ -1112,6 +1112,24 @@ extension InnerSleeveSerializedTests {
         #expect(sorted.last?.title == "Never")
     }
 
+    @Test func sideBTrackHelpersUseSideLocalOrderAndCatalogRange() {
+        let record = Record(
+            artist: "Test Artist", title: "Two Sides", releaseYear: 2026,
+            label: "Test Label", pressingDescription: "Test pressing",
+            artSeed: 1, storageLocation: "Test"
+        )
+        record.tracks = [
+            Track(side: .b, trackNumber: 2, title: "B2", duration: 120),
+            Track(side: .a, trackNumber: 2, title: "A2", duration: 120),
+            Track(side: .b, trackNumber: 1, title: "B1", duration: 120),
+            Track(side: .a, trackNumber: 1, title: "A1", duration: 120),
+            Track(side: .b, trackNumber: 3, title: "B3", duration: 120),
+        ]
+
+        #expect(record.tracks(on: .b).map(\.title) == ["B1", "B2", "B3"])
+        #expect(record.catalogTrackRange(for: .b) == 2..<5)
+    }
+
     @Test func trackDurationsFormatAsMinutesSeconds() {
         let track = Track(side: .a, trackNumber: 1, title: "T", duration: 254)
         #expect(track.formattedDuration == "4:14")
@@ -1305,6 +1323,26 @@ extension InnerSleeveSerializedTests {
             #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: []) == 0)
             #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: [60, 0, 120]) == 0)
         }
+
+        @Test func sideLocalCueAndSeekIgnoreDurationsOnTheOtherSide() {
+            let sideADurations = [900, 300]
+            let sideBDurations = [60, 180]
+
+            #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(
+                progress: 0.5,
+                trackDurations: sideBDurations
+            ) == 1)
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(
+                progress: 0.5,
+                trackDurations: sideBDurations
+            ) == 60)
+
+            // Including Side A would incorrectly land 720 seconds into A1.
+            #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(
+                progress: 0.5,
+                trackDurations: sideADurations + sideBDurations
+            ) == 0)
+        }
     }
 }
 
@@ -1347,6 +1385,13 @@ extension InnerSleeveSerializedTests {
             )
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: "Midnights", trackTitle: nil) == "Midnights")
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: nil, trackTitle: nil) == "No record on deck")
+            #expect(
+                AppleMusicDeckPlayer.deckTickerText(
+                    albumTitle: "Thriller",
+                    trackTitle: "Beat It",
+                    side: .b
+                ) == "SIDE B  •  Thriller  •  Beat It"
+            )
         }
 
         @Test func appleMusicTrackMappingUsesNormalizedLocalTitle() {
@@ -1375,6 +1420,83 @@ extension InnerSleeveSerializedTests {
             )
 
             #expect(index == 2)
+        }
+
+        @Test func sideBTrackMappingIgnoresDuplicateTitlesOnSideA() {
+            let index = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Intro",
+                requestedSideIndex: 0,
+                catalogTrackRange: 2..<4,
+                appleMusicTrackTitles: [
+                    "Intro",
+                    "Side A Closer",
+                    "Intro",
+                    "Side B Closer",
+                ]
+            )
+
+            #expect(index == 2)
+        }
+
+        @Test func sideBTrackMappingFallbackClampsWithinSideB() {
+            let titles = ["A1", "A2", "B1", "B2", "B3"]
+
+            let beforeSide = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Missing",
+                requestedSideIndex: -20,
+                catalogTrackRange: 2..<5,
+                appleMusicTrackTitles: titles
+            )
+            let afterSide = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Missing",
+                requestedSideIndex: 20,
+                catalogTrackRange: 2..<5,
+                appleMusicTrackTitles: titles
+            )
+
+            #expect(beforeSide == 2)
+            #expect(afterSide == 4)
+        }
+
+        @Test func catalogTrackRangeClampsToAlbumBounds() {
+            #expect(AppleMusicDeckPlayer.clampedCatalogTrackRange((-2)..<3, trackCount: 5) == (0..<3))
+            #expect(AppleMusicDeckPlayer.clampedCatalogTrackRange(3..<99, trackCount: 5) == (3..<5))
+            #expect(AppleMusicDeckPlayer.clampedCatalogTrackRange(8..<10, trackCount: 5) == (5..<5))
+        }
+
+        @Test func catalogSideRangeUsesTitleAnchorsWhenEditionsDiffer() {
+            let bonusTrackRange = AppleMusicDeckPlayer.resolvedCatalogTrackRange(
+                suggestedRange: 2..<4,
+                localSideTrackTitles: ["B1", "B2"],
+                appleMusicTrackTitles: ["A1", "A bonus", "A2", "B1", "B2"]
+            )
+            let omittedTrackRange = AppleMusicDeckPlayer.resolvedCatalogTrackRange(
+                suggestedRange: 3..<5,
+                localSideTrackTitles: ["B1", "B2"],
+                appleMusicTrackTitles: ["A1", "A2", "B1", "B2"]
+            )
+
+            #expect(bonusTrackRange == 3..<5)
+            #expect(omittedTrackRange == 2..<4)
+        }
+
+        @Test func playbackRequestGateRejectsStoppedAndSupersededWork() {
+            var gate = PlaybackRequestGate()
+            let first = gate.begin()
+            let second = gate.begin()
+
+            #expect(!gate.isCurrent(first))
+            #expect(gate.isCurrent(second))
+            #expect(gate.completionDisposition(for: first) == .discard)
+            #expect(gate.completionDisposition(for: second) == .publish)
+
+            gate.invalidate()
+            #expect(!gate.isCurrent(second))
+            #expect(gate.completionDisposition(for: second) == .stopPlayer)
+
+            let freshCue = gate.begin()
+            #expect(gate.completionDisposition(for: second) == .discard)
+            #expect(gate.completionDisposition(for: freshCue) == .publish)
         }
     }
 }

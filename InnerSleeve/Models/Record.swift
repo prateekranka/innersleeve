@@ -332,8 +332,26 @@ extension Record {
         tracks.filter { $0.side == .b }.sorted { $0.trackNumber < $1.trackNumber }
     }
 
+    /// Tracks on one physical face, ordered from the outer groove inward.
+    func tracks(on side: RecordSide) -> [Track] {
+        switch side {
+        case .a: tracksSideA
+        case .b: tracksSideB
+        }
+    }
+
     var sequencedTracks: [Track] {
         tracksSideA + tracksSideB
+    }
+
+    /// The side's bounds in the full A-then-B track sequence used by catalog albums.
+    func catalogTrackRange(for side: RecordSide) -> Range<Int> {
+        switch side {
+        case .a:
+            0..<tracksSideA.count
+        case .b:
+            tracksSideA.count..<(tracksSideA.count + tracksSideB.count)
+        }
     }
 
     var sortedPlayLog: [PlayLogEntry] {

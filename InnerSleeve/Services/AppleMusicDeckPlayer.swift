@@ -45,6 +45,7 @@ final class AppleMusicDeckPlayer {
     private(set) var currentAlbumTitle: String?
     private(set) var currentTrackTitle: String?
     private(set) var currentTrackIndex: Int?
+    private(set) var currentSide: RecordSide?
 
     /// Human-readable status for the amber deck display or control.
     var statusText: String {
@@ -75,6 +76,8 @@ final class AppleMusicDeckPlayer {
     /// on the same record re-queues instantly instead of re-fetching.
     private var loadedAlbumID: String?
     private var loadedAlbum: MusicKit.Album?
+    private var playbackRequests = PlaybackRequestGate()
+    @ObservationIgnored private var playerPlayTask: Task<Void, Error>?
 
     // MARK: Public API
 
@@ -86,43 +89,54 @@ final class AppleMusicDeckPlayer {
         authorizationStatus = status
     }
 
-    /// Load and play the given record from the requested track.
-    ///
-    /// If `appleMusicAlbumID` is already cached on the record, playback
-    /// starts immediately. Otherwise the catalog is searched and the
-    /// result is persisted before playing.
+    /// Load and play one physical side, using a side-local starting index.
     func loadAndPlay(
         record: Record,
-        startingAt trackIndex: Int = 0,
+        side: RecordSide,
+        startingAt sideTrackIndex: Int = 0,
         seekToSeconds: Double = 0,
         modelContext: ModelContext
     ) async {
+        let requestGeneration = beginPlaybackRequest()
         errorMessage = nil
         isLoading = true
         loadingMessage = "Finding on Apple Music…"
 
-        defer { isLoading = false }
-
-        guard await ensureAuthorization() else {
-            errorMessage = "Apple Music unavailable"
-            return
+        defer {
+            if isCurrentRequest(requestGeneration) {
+                isLoading = false
+            }
         }
 
+        guard await ensureAuthorization() else {
+            if isCurrentRequest(requestGeneration) {
+                errorMessage = "Apple Music unavailable"
+            }
+            return
+        }
+        guard isCurrentRequest(requestGeneration) else { return }
+
         let recordID = record.persistentModelID
+        let playableTracks = record.tracks(on: side)
+        let catalogTrackRange = record.catalogTrackRange(for: side)
+        let clampedTrackIndex = AppleMusicDeckPlayer.clampedTrackIndex(
+            sideTrackIndex,
+            trackCount: playableTracks.count
+        )
+        let track = playableTracks[safe: clampedTrackIndex]
 
         if let cachedID = albumIDCache[recordID] ?? record.appleMusicAlbumID {
-            let clampedTrackIndex = AppleMusicDeckPlayer.clampedTrackIndex(
-                trackIndex,
-                trackCount: record.sequencedTracks.count
-            )
-            let track = record.sequencedTracks[safe: clampedTrackIndex]
             loadingMessage = "Loading album…"
-            await play(
+            await playAlbum(
                 albumID: cachedID,
+                side: side,
                 startingAt: clampedTrackIndex,
                 seekToSeconds: seekToSeconds,
                 albumTitle: record.title,
-                trackTitle: track?.title
+                trackTitle: track?.title,
+                catalogTrackRange: catalogTrackRange,
+                localSideTrackTitles: playableTracks.map(\.title),
+                requestGeneration: requestGeneration
             )
             return
         }
@@ -130,50 +144,85 @@ final class AppleMusicDeckPlayer {
         let albumID: String
         do {
             guard let foundAlbumID = try await searchAlbum(artist: record.artist, title: record.title) else {
-                errorMessage = "Album not found"
+                if isCurrentRequest(requestGeneration) {
+                    errorMessage = "Album not found"
+                }
                 return
             }
             albumID = foundAlbumID
         } catch {
-            errorMessage = AppleMusicDeckPlayer.lookupFailureMessage(for: error)
+            if isCurrentRequest(requestGeneration) {
+                errorMessage = AppleMusicDeckPlayer.lookupFailureMessage(for: error)
+            }
             return
         }
+        guard isCurrentRequest(requestGeneration) else { return }
 
         record.appleMusicAlbumID = albumID
         albumIDCache[recordID] = albumID
         try? modelContext.save()
 
-        let clampedTrackIndex = AppleMusicDeckPlayer.clampedTrackIndex(
-            trackIndex,
-            trackCount: record.sequencedTracks.count
-        )
-        let track = record.sequencedTracks[safe: clampedTrackIndex]
         loadingMessage = "Loading album…"
-        await play(
+        await playAlbum(
             albumID: albumID,
+            side: side,
             startingAt: clampedTrackIndex,
             seekToSeconds: seekToSeconds,
             albumTitle: record.title,
-            trackTitle: track?.title
+            trackTitle: track?.title,
+            catalogTrackRange: catalogTrackRange,
+            localSideTrackTitles: playableTracks.map(\.title),
+            requestGeneration: requestGeneration
         )
     }
 
-    /// Play the album identified by `albumID`, optionally starting at a
-    /// different track index (0-based, from the catalog track list order)
-    /// and seeking part-way into that track — how a stylus dropped
-    /// mid-groove behaves.
+    /// Play one physical side, starting at a side-local track index.
+    /// The supplied range is the side's location in the catalog album.
     func play(
         albumID: String,
-        startingAt trackIndex: Int = 0,
+        side: RecordSide,
+        startingAt sideTrackIndex: Int = 0,
         seekToSeconds: Double = 0,
         albumTitle: String? = nil,
-        trackTitle: String? = nil
+        trackTitle: String? = nil,
+        catalogTrackRange: Range<Int>,
+        sideTrackTitles: [String]
     ) async {
+        let requestGeneration = beginPlaybackRequest()
+        await playAlbum(
+            albumID: albumID,
+            side: side,
+            startingAt: sideTrackIndex,
+            seekToSeconds: seekToSeconds,
+            albumTitle: albumTitle,
+            trackTitle: trackTitle,
+            catalogTrackRange: catalogTrackRange,
+            localSideTrackTitles: sideTrackTitles,
+            requestGeneration: requestGeneration
+        )
+    }
+
+    private func playAlbum(
+        albumID: String,
+        side: RecordSide,
+        startingAt sideTrackIndex: Int,
+        seekToSeconds: Double,
+        albumTitle: String?,
+        trackTitle: String?,
+        catalogTrackRange: Range<Int>,
+        localSideTrackTitles: [String],
+        requestGeneration: Int
+    ) async {
+        guard isCurrentRequest(requestGeneration) else { return }
         errorMessage = nil
         isLoading = true
         loadingMessage = "Loading album…"
 
-        defer { isLoading = false }
+        defer {
+            if isCurrentRequest(requestGeneration) {
+                isLoading = false
+            }
+        }
 
         do {
             let albumWithTracks: MusicKit.Album
@@ -183,6 +232,7 @@ final class AppleMusicDeckPlayer {
                 var request = MusicCatalogResourceRequest<MusicKit.Album>(matching: \.id, equalTo: MusicItemID(albumID))
                 request.limit = 1
                 let response = try await request.response()
+                guard isCurrentRequest(requestGeneration) else { return }
 
                 guard let album = response.items.first else {
                     errorMessage = "Album unavailable"
@@ -190,6 +240,7 @@ final class AppleMusicDeckPlayer {
                 }
 
                 albumWithTracks = try await album.with(.tracks)
+                guard isCurrentRequest(requestGeneration) else { return }
                 loadedAlbum = albumWithTracks
                 loadedAlbumID = albumID
             }
@@ -200,39 +251,101 @@ final class AppleMusicDeckPlayer {
                 isPlaying = false
                 return
             }
-            let requestedIndex = min(max(trackIndex, 0), max(tracks.count - 1, 0))
-            let clampedIndex = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+
+            let sideRange = AppleMusicDeckPlayer.resolvedCatalogTrackRange(
+                suggestedRange: catalogTrackRange,
+                localSideTrackTitles: localSideTrackTitles,
+                appleMusicTrackTitles: tracks.map(\.title)
+            )
+            guard !sideRange.isEmpty else {
+                errorMessage = "Record side unavailable"
+                isPlaying = false
+                return
+            }
+
+            let catalogTrackIndex = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
                 localTrackTitle: trackTitle,
-                requestedIndex: requestedIndex,
+                requestedSideIndex: sideTrackIndex,
+                catalogTrackRange: sideRange,
                 appleMusicTrackTitles: tracks.map(\.title)
             )
 
-            let startTrack = tracks[clampedIndex]
-            player.queue = ApplicationMusicPlayer.Queue(album: albumWithTracks, startingAt: startTrack)
+            let sideTracks = Array(tracks[sideRange])
+            let startTrack = tracks[catalogTrackIndex]
+            guard isCurrentRequest(requestGeneration) else { return }
+            player.queue = ApplicationMusicPlayer.Queue(for: sideTracks, startingAt: startTrack)
 
-            try await player.play()
+            let playTask = Task { @MainActor in
+                try await player.play()
+            }
+            playerPlayTask = playTask
+            try await playTask.value
+
+            switch playbackRequests.completionDisposition(for: requestGeneration) {
+            case .publish:
+                playerPlayTask = nil
+            case .stopPlayer:
+                playerPlayTask = nil
+                player.stop()
+                return
+            case .discard:
+                return
+            }
+            guard !Task.isCancelled else {
+                if playbackRequests.completionDisposition(for: requestGeneration) == .stopPlayer {
+                    player.stop()
+                }
+                return
+            }
             if seekToSeconds > 1 {
                 player.playbackTime = seekToSeconds
             }
             currentAlbumID = albumID
             currentAlbumTitle = albumTitle ?? albumWithTracks.title
             currentTrackTitle = trackTitle ?? startTrack.title
-            currentTrackIndex = clampedIndex
+            currentTrackIndex = catalogTrackIndex - sideRange.lowerBound
+            currentSide = side
             isPlaying = true
         } catch {
-            errorMessage = "Playback failed"
-            isPlaying = false
+            switch playbackRequests.completionDisposition(for: requestGeneration) {
+            case .publish:
+                playerPlayTask = nil
+                errorMessage = "Playback failed"
+                isPlaying = false
+            case .stopPlayer:
+                playerPlayTask = nil
+                player.stop()
+            case .discard:
+                break
+            }
         }
     }
 
     /// Stops playback and resets state.
     func stop() {
+        playbackRequests.invalidate()
+        playerPlayTask?.cancel()
+        playerPlayTask = nil
         player.stop()
         isPlaying = false
+        isLoading = false
         currentAlbumID = nil
         currentAlbumTitle = nil
         currentTrackTitle = nil
         currentTrackIndex = nil
+        currentSide = nil
+    }
+
+    private func beginPlaybackRequest() -> Int {
+        playerPlayTask?.cancel()
+        playerPlayTask = nil
+        player.stop()
+        isPlaying = false
+        return playbackRequests.begin()
+    }
+
+    private func isCurrentRequest(_ generation: Int) -> Bool {
+        playbackRequests.isCurrent(generation) && !Task.isCancelled
     }
 
     // MARK: Catalog search
@@ -320,16 +433,24 @@ final class AppleMusicDeckPlayer {
         return offset < 2 ? 0 : offset
     }
 
-    nonisolated static func deckTickerText(albumTitle: String?, trackTitle: String?) -> String {
+    nonisolated static func deckTickerText(
+        albumTitle: String?,
+        trackTitle: String?,
+        side: RecordSide? = nil
+    ) -> String {
         let album = albumTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let track = trackTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
+        let recordText: String
         switch (album.isEmpty, track.isEmpty) {
-        case (false, false): return "\(album)  •  \(track)"
-        case (false, true): return album
-        case (true, false): return track
-        case (true, true): return "No record on deck"
+        case (false, false): recordText = "\(album)  •  \(track)"
+        case (false, true): recordText = album
+        case (true, false): recordText = track
+        case (true, true): recordText = "No record on deck"
         }
+
+        guard let side else { return recordText }
+        return "SIDE \(side.rawValue)  •  \(recordText)"
     }
 
     nonisolated static func clampedTrackIndex(_ index: Int, trackCount: Int) -> Int {
@@ -342,17 +463,108 @@ final class AppleMusicDeckPlayer {
         requestedIndex: Int,
         appleMusicTrackTitles: [String]
     ) -> Int {
-        guard !appleMusicTrackTitles.isEmpty else { return 0 }
-        let fallback = clampedTrackIndex(requestedIndex, trackCount: appleMusicTrackTitles.count)
+        mappedCatalogTrackIndex(
+            localTrackTitle: localTrackTitle,
+            requestedSideIndex: requestedIndex,
+            catalogTrackRange: 0..<appleMusicTrackTitles.count,
+            appleMusicTrackTitles: appleMusicTrackTitles
+        )
+    }
+
+    /// Maps a side-local request into the catalog album while limiting title
+    /// matching and fallback clamping to that side's catalog range.
+    nonisolated static func mappedCatalogTrackIndex(
+        localTrackTitle: String?,
+        requestedSideIndex: Int,
+        catalogTrackRange: Range<Int>,
+        appleMusicTrackTitles: [String]
+    ) -> Int {
+        let range = clampedCatalogTrackRange(
+            catalogTrackRange,
+            trackCount: appleMusicTrackTitles.count
+        )
+        guard !range.isEmpty else { return 0 }
+
+        let fallback = range.lowerBound + clampedTrackIndex(
+            requestedSideIndex,
+            trackCount: range.count
+        )
         guard let localTrackTitle else { return fallback }
         let normalizedLocal = normalizedTrackTitle(localTrackTitle)
         guard !normalizedLocal.isEmpty else { return fallback }
 
-        if let exactMatch = appleMusicTrackTitles.firstIndex(where: { normalizedTrackTitle($0) == normalizedLocal }) {
+        if let exactMatch = appleMusicTrackTitles[range].firstIndex(where: {
+            normalizedTrackTitle($0) == normalizedLocal
+        }) {
             return exactMatch
         }
 
         return fallback
+    }
+
+    nonisolated static func clampedCatalogTrackRange(
+        _ range: Range<Int>,
+        trackCount: Int
+    ) -> Range<Int> {
+        let count = max(trackCount, 0)
+        let lowerBound = min(max(range.lowerBound, 0), count)
+        let upperBound = min(max(range.upperBound, 0), count)
+        return lowerBound..<max(lowerBound, upperBound)
+    }
+
+    /// Reconciles local side metadata with the selected Apple Music edition.
+    /// Ordered title anchors shift or expand the nominal local-count range when
+    /// the catalog edition contains an omitted track or an extra cut.
+    nonisolated static func resolvedCatalogTrackRange(
+        suggestedRange: Range<Int>,
+        localSideTrackTitles: [String],
+        appleMusicTrackTitles: [String]
+    ) -> Range<Int> {
+        let fallback = clampedCatalogTrackRange(
+            suggestedRange,
+            trackCount: appleMusicTrackTitles.count
+        )
+        guard !localSideTrackTitles.isEmpty, !appleMusicTrackTitles.isEmpty else {
+            return fallback
+        }
+
+        let normalizedCatalog = appleMusicTrackTitles.map(normalizedTrackTitle)
+        let normalizedLocal = localSideTrackTitles.map(normalizedTrackTitle)
+        var anchors: [(local: Int, catalog: Int)] = []
+        var searchStart = 0
+
+        for (localIndex, title) in normalizedLocal.enumerated() where !title.isEmpty {
+            let candidates = normalizedCatalog.indices.filter {
+                $0 >= searchStart && normalizedCatalog[$0] == title
+            }
+            guard !candidates.isEmpty else { continue }
+
+            let expectedIndex = fallback.lowerBound + localIndex
+            let catalogIndex: Int
+            if anchors.isEmpty {
+                catalogIndex = candidates.min {
+                    abs($0 - expectedIndex) < abs($1 - expectedIndex)
+                } ?? candidates[0]
+            } else {
+                catalogIndex = candidates[0]
+            }
+
+            anchors.append((local: localIndex, catalog: catalogIndex))
+            searchStart = catalogIndex + 1
+        }
+
+        guard let first = anchors.first, let last = anchors.last else {
+            return fallback
+        }
+
+        let inferredLower = max(first.catalog - first.local, 0)
+        let remainingLocalTracks = normalizedLocal.count - last.local - 1
+        let inferredUpper = last.catalog + remainingLocalTracks + 1
+        let resolved = clampedCatalogTrackRange(
+            inferredLower..<inferredUpper,
+            trackCount: appleMusicTrackTitles.count
+        )
+        return resolved.isEmpty ? fallback : resolved
     }
 
     /// Picks the best album match for a record's artist and title.
@@ -419,6 +631,42 @@ final class AppleMusicDeckPlayer {
                 result.append(character)
             }
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Monotonic invalidation for async catalog/play requests. A stopped or
+/// superseded request can finish its await, but it can no longer mutate the
+/// queue or publish playback state.
+struct PlaybackRequestGate {
+    enum CompletionDisposition: Equatable {
+        case publish
+        case discard
+        case stopPlayer
+    }
+
+    private(set) var generation = 0
+    private(set) var activeGeneration: Int?
+
+    mutating func begin() -> Int {
+        generation &+= 1
+        activeGeneration = generation
+        return generation
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        activeGeneration = nil
+    }
+
+    func isCurrent(_ candidate: Int) -> Bool {
+        candidate == activeGeneration
+    }
+
+    func completionDisposition(for candidate: Int) -> CompletionDisposition {
+        if candidate == activeGeneration {
+            return .publish
+        }
+        return activeGeneration == nil ? .stopPlayer : .discard
     }
 }
 

@@ -7,6 +7,7 @@ import UIKit
 /// Off-white body, recessed platter, engraved details, amber status display.
 struct TurntableDeckView: View {
     var displayText: String
+    var activeSide: RecordSide = .a
     var onStop: (() -> Void)? = nil
     var isPlaying: Bool = false
 
@@ -18,6 +19,7 @@ struct TurntableDeckView: View {
             brandMark
             armRestClip
             statusDisplay
+            DeckSideIndicator(activeSide: activeSide)
             DeckStopButton(onStop: onStop, isPlaying: isPlaying)
         }
         .frame(width: deckWidth, height: deckHeight)
@@ -152,6 +154,36 @@ struct TurntableDeckView: View {
 }
 
 // MARK: - Deck hardware controls
+
+/// Engraved side readout beside the platter. It is deliberately passive:
+/// the record itself is the control, while this confirms which face is up.
+private struct DeckSideIndicator: View {
+    let activeSide: RecordSide
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("SIDE")
+                    .font(.system(size: 6, weight: .semibold, design: .monospaced))
+                    .kerning(0.8)
+                Text(activeSide.rawValue)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+            }
+
+            HStack(spacing: 2) {
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 5.5, weight: .bold))
+                Text("HOLD · SLIDE")
+                    .font(.system(size: 5.5, weight: .semibold, design: .monospaced))
+                    .kerning(0.35)
+            }
+        }
+        .foregroundStyle(Color.black.opacity(0.46))
+        .offset(x: 126, y: 22)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(activeSide.displayName)
+    }
+}
 
 /// Off-white bevel key cap stop button with amber LED indicator.
 private struct DeckStopButton: View {
