@@ -131,12 +131,14 @@ private struct ReleaseDTO: Decodable {
     var candidate: ReleaseCandidate {
         let tracks = ReleaseSideParser.assignSidesIfMissing((media ?? []).flatMap { medium in
             (medium.tracks ?? []).enumerated().map { offset, track in
-                let side = ReleaseSideParser.side(from: track.position)
+                // Vinyl side markers ("A1") live in `number`; `position` is
+                // a plain integer in release lookups.
+                let marker = track.number ?? track.position
                 return TrackCandidate(
-                    side: side,
-                    number: ReleaseSideParser.number(from: track.position, fallback: offset + 1),
-                    title: track.title,
-                    seconds: track.length.map { $0 / 1000 }
+                    side: ReleaseSideParser.side(from: marker),
+                    number: ReleaseSideParser.number(from: marker, fallback: offset + 1),
+                    title: track.resolvedTitle,
+                    seconds: track.resolvedLengthMilliseconds.map { $0 / 1000 }
                 )
             }
         })
@@ -182,8 +184,48 @@ private struct MediumDTO: Decodable {
     var tracks: [TrackDTO]?
 }
 
+/// MusicBrainz encodes `position` as an integer in release lookups but as a
+/// string in some search payloads, and vinyl side markers ("A1") arrive in
+/// `number`. Decode all shapes tolerantly — a surprise Int here used to fail
+/// the whole release decode and silently drop every track list.
 private struct TrackDTO: Decodable {
     var position: String?
-    var title: String
+    var number: String?
+    var title: String?
+    var length: Int?
+    var recording: RecordingDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case position, number, title, length, recording
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let text = try? container.decodeIfPresent(String.self, forKey: .position) {
+            position = text
+        } else if let value = try? container.decodeIfPresent(Int.self, forKey: .position) {
+            position = String(value)
+        }
+        if let text = try? container.decodeIfPresent(String.self, forKey: .number) {
+            number = text
+        } else if let value = try? container.decodeIfPresent(Int.self, forKey: .number) {
+            number = String(value)
+        }
+        title = try? container.decodeIfPresent(String.self, forKey: .title)
+        length = try? container.decodeIfPresent(Int.self, forKey: .length)
+        recording = try? container.decodeIfPresent(RecordingDTO.self, forKey: .recording)
+    }
+
+    var resolvedTitle: String {
+        title ?? recording?.title ?? ""
+    }
+
+    var resolvedLengthMilliseconds: Int? {
+        length ?? recording?.length
+    }
+}
+
+private struct RecordingDTO: Decodable {
+    var title: String?
     var length: Int?
 }

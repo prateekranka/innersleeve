@@ -78,15 +78,38 @@ enum VinylStyle: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .black: return "Black"
-        case .translucent: return "Translucent"
-        case .swirl: return "Swirl"
-        case .marble: return "Marble"
-        case .pinwheel: return "Pinwheel"
-        case .burst: return "Burst"
-        case .halo: return "Halo"
-        case .splatterMix: return "Splatter"
-        case .smoke: return "Smoke"
+        case .black: return "Classic Black"
+        case .translucent: return "Clear Tint"
+        case .swirl: return "Liquid Pour"
+        case .marble: return "Veined Marble"
+        case .pinwheel: return "Color Block"
+        case .burst: return "Radial Burst"
+        case .halo: return "Frost Ring"
+        case .splatterMix: return "Confetti Splatter"
+        case .smoke: return "Cloudy Smoke"
+        }
+    }
+
+    var materialDescription: String {
+        switch self {
+        case .black:
+            return "Deep black resin with restrained studio sheen."
+        case .translucent:
+            return "Clear colored resin with subtle density clouds and a bright rim."
+        case .swirl:
+            return "Broad pigments poured together into feathered, twisting fields."
+        case .marble:
+            return "Clouded resin crossed by long veins and fine branching threads."
+        case .pinwheel:
+            return "Uneven blocks of color with soft, overlapping poured seams."
+        case .burst:
+            return "Tapered pigment streaks exploding from the label toward the rim."
+        case .halo:
+            return "A pale powder ring suspended inside a deep translucent base."
+        case .splatterMix:
+            return "Fine dashes and droplets scattered through a light pressing."
+        case .smoke:
+            return "Low-contrast clouds and wisps suspended in translucent vinyl."
         }
     }
 
@@ -260,21 +283,21 @@ extension Record {
             if legacyAppearance == .amber {
                 return ("#F5B23A", "#8C540D")
             }
-            return ("#F25A1D", "#F2B21A")
+            return ("#238A98", "#9AD9DA")
         case .swirl:
-            return ("#10171C", "#F25A1D")
+            return ("#164D5A", "#F05A38")
         case .marble:
-            return ("#F3F2ED", "#8A8F91")
+            return ("#D47A1F", "#70252C")
         case .pinwheel:
-            return ("#050505", "#F2B21A")
+            return ("#14356F", "#D83E32")
         case .burst:
-            return ("#F25A1D", "#10171C")
+            return ("#F1E4C8", "#C42A45")
         case .halo:
-            return ("#10171C", "#F2B21A")
+            return ("#173F8F", "#DCEAF5")
         case .splatterMix:
-            return ("#050505", "#F25A1D")
+            return ("#EFE4CA", "#C72A40")
         case .smoke:
-            return ("#54565A", "#10171C")
+            return ("#17616A", "#102D35")
         }
     }
 
@@ -332,8 +355,26 @@ extension Record {
         tracks.filter { $0.side == .b }.sorted { $0.trackNumber < $1.trackNumber }
     }
 
+    /// Tracks on one physical face, ordered from the outer groove inward.
+    func tracks(on side: RecordSide) -> [Track] {
+        switch side {
+        case .a: tracksSideA
+        case .b: tracksSideB
+        }
+    }
+
     var sequencedTracks: [Track] {
         tracksSideA + tracksSideB
+    }
+
+    /// The side's bounds in the full A-then-B track sequence used by catalog albums.
+    func catalogTrackRange(for side: RecordSide) -> Range<Int> {
+        switch side {
+        case .a:
+            0..<tracksSideA.count
+        case .b:
+            tracksSideA.count..<(tracksSideA.count + tracksSideB.count)
+        }
     }
 
     var sortedPlayLog: [PlayLogEntry] {

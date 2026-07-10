@@ -4,6 +4,7 @@ import SwiftData
 /// The first screen: a draggable 3D shelf of records on a pale grey stage.
 struct CollectionGalleryView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
     @Query private var allRecords: [Record]
     @State private var selection: Int = 0
     @State private var detailRecord: Record? = nil
@@ -14,7 +15,6 @@ struct CollectionGalleryView: View {
     @State private var deleteRecord: Record? = nil
     @State private var pendingSelectionID: PersistentIdentifier?
     @State private var shelfMode: ShelfMode = .carousel
-    @State private var relightMode = false
     var onPutOnDeck: (Record) -> Void = { _ in }
 
     private var records: [Record] {
@@ -41,27 +41,18 @@ struct CollectionGalleryView: View {
 
                     switch shelfMode {
                     case .carousel:
-                        ZStack {
-                            DepthCarouselView(
-                                items: records,
-                                selection: $selection,
-                                discDiameter: 340,
-                                onHeroTap: { detailRecord = $0 }
-                            ) { record, isSelected in
-                                RecordDiscView(record: record, glossStrength: isSelected ? 1.0 : 0.5)
-                                    .contextMenu {
-                                        if isSelected {
-                                            recordContextMenu(for: record)
-                                        }
+                        DepthCarouselView(
+                            items: records,
+                            selection: $selection,
+                            discDiameter: 340,
+                            onHeroTap: { detailRecord = $0 }
+                        ) { record, isSelected in
+                            RecordDiscView(record: record, glossStrength: isSelected ? 1.0 : 0.5)
+                                .contextMenu {
+                                    if isSelected {
+                                        recordContextMenu(for: record)
                                     }
-                            }
-
-                            if relightMode {
-                                StageLightControl()
-                                    .frame(width: 340, height: 340)
-                                    .transition(.scale(scale: 0.92).combined(with: .opacity))
-                                    .zIndex(10)
-                            }
+                                }
                         }
                         .frame(height: 420)
                         .frame(maxHeight: .infinity, alignment: .center)
@@ -147,6 +138,16 @@ struct CollectionGalleryView: View {
         }
         .onChange(of: records.map(\.persistentModelID)) { _, _ in
             applyPendingSelection()
+        }
+        .task {
+            // Records saved without Side A/B track lists (older additions,
+            // failed lookups) get them fetched from the catalog.
+            guard let settings else { return }
+            await TrackListBackfill.shared.backfillMissingTracks(
+                in: allRecords,
+                lookup: settings.makeLookupService(),
+                modelContext: modelContext
+            )
         }
     }
 
@@ -247,11 +248,6 @@ struct CollectionGalleryView: View {
             }
 
         }
-        .overlay(alignment: .trailing) {
-            if shelfMode == .carousel {
-                relightButton
-            }
-        }
         .padding(.horizontal, 36)
         .animation(.easeInOut(duration: 0.22), value: selection)
     }
@@ -310,30 +306,6 @@ struct CollectionGalleryView: View {
         }
     }
 
-    @ViewBuilder
-    private var relightButton: some View {
-        let button = Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                relightMode.toggle()
-            }
-        } label: {
-            Image(systemName: relightMode ? "sun.max.fill" : "sun.max")
-                .font(.system(size: 12, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .accessibilityLabel(relightMode ? "Hide relight control" : "Relight records")
-        .offset(x: 10, y: -2)
-
-        if relightMode {
-            button
-                .buttonStyle(.glassProminent)
-                .tint(Palette.warmYellow)
-        } else {
-            button
-                .buttonStyle(.glass)
-                .tint(Palette.inkOnStage)
-        }
-    }
 }
 
 private enum ShelfMode {

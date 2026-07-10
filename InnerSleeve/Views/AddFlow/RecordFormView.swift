@@ -51,8 +51,9 @@ struct RecordDraft {
                 return value
             }
             .joined(separator: " · ")
-        if !candidate.tracks.isEmpty {
-            tracks = candidate.tracks.map {
+        let catalogTracks = ReleaseSideParser.assignSidesIfMissing(candidate.tracks)
+        if !catalogTracks.isEmpty {
+            tracks = catalogTracks.map {
                 TrackDraft(side: $0.side ?? .a, number: $0.number, title: $0.title, duration: $0.seconds ?? 0)
             }
         }

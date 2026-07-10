@@ -7,6 +7,7 @@ import UIKit
 /// Off-white body, recessed platter, engraved details, amber status display.
 struct TurntableDeckView: View {
     var displayText: String
+    var activeSide: RecordSide = .a
     var onStop: (() -> Void)? = nil
     var isPlaying: Bool = false
 
@@ -18,6 +19,7 @@ struct TurntableDeckView: View {
             brandMark
             armRestClip
             statusDisplay
+            DeckSideIndicator(activeSide: activeSide)
             DeckStopButton(onStop: onStop, isPlaying: isPlaying)
         }
         .frame(width: deckWidth, height: deckHeight)
@@ -153,6 +155,36 @@ struct TurntableDeckView: View {
 
 // MARK: - Deck hardware controls
 
+/// Engraved side readout beside the platter. It is deliberately passive:
+/// the record itself is the control, while this confirms which face is up.
+private struct DeckSideIndicator: View {
+    let activeSide: RecordSide
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("SIDE")
+                    .font(.system(size: 6, weight: .semibold, design: .monospaced))
+                    .kerning(0.8)
+                Text(activeSide.rawValue)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+            }
+
+            HStack(spacing: 2) {
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 5.5, weight: .bold))
+                Text("HOLD · SLIDE")
+                    .font(.system(size: 5.5, weight: .semibold, design: .monospaced))
+                    .kerning(0.35)
+            }
+        }
+        .foregroundStyle(Color.black.opacity(0.46))
+        .offset(x: 126, y: 22)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(activeSide.displayName)
+    }
+}
+
 /// Off-white bevel key cap stop button with amber LED indicator.
 private struct DeckStopButton: View {
     var onStop: (() -> Void)?
@@ -208,7 +240,7 @@ private struct DeckStopButton: View {
                 .frame(width: 5, height: 5)
                 .shadow(color: isPlaying ? Palette.amberDisplay.opacity(0.6) : .clear, radius: 3)
         }
-        .offset(x: 128, y: 90)
+        .offset(x: 128, y: 58)
     }
 }
 
@@ -219,9 +251,9 @@ private struct DeckTickerDisplay: View {
 
     @State private var startDate = Date()
 
-    private let displayWidth: CGFloat = 300
-    private let scrollSpeed: CGFloat = 30
-    private let gapText = "     •     "
+    private let displayWidth: CGFloat = 326
+    private let scrollSpeed: CGFloat = 32
+    private let gapText = "  •  "
     private let font = UIFont.monospacedSystemFont(ofSize: 8.5, weight: .medium)
 
     private var measuredWidth: CGFloat {
@@ -241,8 +273,10 @@ private struct DeckTickerDisplay: View {
             && displayText != "Queue empty"
 
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldScroll)) { context in
-            let repeatedText = shouldScroll ? "\(displayText)\(gapText)\(displayText)" : displayText
-            let singleTravel = max(measuredWidth, displayWidth) + gapWidth
+            let repeatedText = shouldScroll
+                ? Array(repeating: displayText, count: 8).joined(separator: gapText)
+                : displayText
+            let singleTravel = measuredWidth + gapWidth
             let cycle = singleTravel / scrollSpeed
             let elapsed = max(0, context.date.timeIntervalSince(startDate) - 1.0)
             let progress = shouldScroll ? elapsed.truncatingRemainder(dividingBy: cycle) / cycle : 0
@@ -277,15 +311,19 @@ private struct DeckTickerDisplay: View {
 struct TonearmView: View {
     var angle: Double = -16
     var isLifted: Bool = false
+    /// True while the user has hold of the stylus — the arm then tracks the
+    /// finger near-instantly instead of easing on a soft spring.
+    var isEngaged: Bool = false
     private var isGrooveRiding: Bool = false
 
     @State private var grooveRideStartedAt: Date?
 
     private let pivotAnchor = UnitPoint(x: 0.69, y: 0.09)
 
-    init(angle: Double = -16, isLifted: Bool = false, isGrooveRiding: Bool = false) {
+    init(angle: Double = -16, isLifted: Bool = false, isEngaged: Bool = false, isGrooveRiding: Bool = false) {
         self.angle = angle
         self.isLifted = isLifted
+        self.isEngaged = isEngaged
         self.isGrooveRiding = isGrooveRiding
     }
 
@@ -304,10 +342,14 @@ struct TonearmView: View {
         }
         .rotationEffect(.degrees(angle), anchor: pivotAnchor)
         .offset(y: isLifted ? -4 : 0)
-        .animation(.spring(response: 0.42, dampingFraction: 0.7), value: angle)
+        .animation(
+            isEngaged
+                ? .interactiveSpring(response: 0.12, dampingFraction: 0.86)
+                : .spring(response: 0.42, dampingFraction: 0.7),
+            value: angle
+        )
         .animation(.spring(response: 0.42, dampingFraction: 0.7), value: isLifted)
         .frame(width: 344, height: 236)
-        .contentShape(TonearmHitShape())
         .onAppear {
             grooveRideStartedAt = isGrooveRiding ? Date() : nil
         }
@@ -388,25 +430,6 @@ struct TonearmView: View {
         }
     }
 
-    private struct TonearmHitShape: Shape {
-        func path(in rect: CGRect) -> Path {
-            var path = Path()
-            let pivot = CGPoint(x: rect.midX + 66, y: rect.midY - 96)
-            let elbow = CGPoint(x: rect.midX + 44, y: rect.midY + 6)
-            let tip = CGPoint(x: rect.midX - 24, y: rect.midY + 40)
-            let radius: CGFloat = 13
-            let tipRadius: CGFloat = 11
-
-            path.move(to: CGPoint(x: pivot.x - radius, y: pivot.y - radius))
-            path.addLine(to: CGPoint(x: pivot.x + radius, y: pivot.y - radius))
-            path.addLine(to: CGPoint(x: elbow.x + radius, y: elbow.y))
-            path.addLine(to: CGPoint(x: tip.x + tipRadius, y: tip.y + tipRadius))
-            path.addLine(to: CGPoint(x: tip.x - tipRadius, y: tip.y + tipRadius))
-            path.addLine(to: CGPoint(x: elbow.x - radius, y: elbow.y))
-            path.closeSubpath()
-            return path
-        }
-    }
 }
 
 #Preview("Deck with tonearm", traits: .sizeThatFitsLayout) {

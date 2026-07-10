@@ -109,6 +109,18 @@ struct AddRecordFlow: View {
         if draft.coverImageData == nil {
             Task { await loadCover(for: record, url: draft.coverArtURL) }
         }
+        if record.tracks.isEmpty {
+            // Every addition gets a Side A/B track list, even when the
+            // chosen catalog entry (or manual entry) came without one.
+            let lookup = settings.makeLookupService()
+            Task {
+                await TrackListBackfill.shared.backfill(
+                    record: record,
+                    lookup: lookup,
+                    modelContext: modelContext
+                )
+            }
+        }
         dismiss()
     }
 

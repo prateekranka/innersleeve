@@ -177,6 +177,20 @@ extension InnerSleeveSerializedTests {
             #expect(assigned.map(\.number) == [1, 2, 3, 1, 2])
         }
 
+        @Test func sideParserRenumbersMarkedTracksPerSide() {
+            let tracks = [
+                TrackCandidate(side: .a, number: 1, title: "A One"),
+                TrackCandidate(side: .a, number: 7, title: "A Two"),
+                TrackCandidate(side: .b, number: 9, title: "B One"),
+                TrackCandidate(side: .b, number: 10, title: "B Two"),
+            ]
+
+            let assigned = ReleaseSideParser.assignSidesIfMissing(tracks)
+
+            #expect(assigned.map(\.side) == [.a, .a, .b, .b])
+            #expect(assigned.map(\.number) == [1, 2, 1, 2])
+        }
+
         @Test func musicBrainzTextQueryUsesArtistReleaseSplits() {
             let query = ReleaseSearchTuning.musicBrainzQuery(for: "kind of blue miles davis")
 
@@ -325,6 +339,96 @@ extension InnerSleeveSerializedTests {
             #expect(record.tracks.count == 2)
             #expect(record.tracksSideA.first?.title == "A Song")
             #expect(record.tracksSideB.first?.duration == 120)
+        }
+
+        @MainActor
+        @Test func recordDraftCandidateSplitsNumericCatalogTracksIntoSides() {
+            let candidate = ReleaseCandidate(
+                id: "mb:numeric",
+                artist: "Khruangbin",
+                title: "Con todo el mundo",
+                year: 2018,
+                label: "Dead Oceans",
+                catalogNumber: nil,
+                format: "Digital Media",
+                country: "XW",
+                barcode: nil,
+                coverArtURL: nil,
+                tracks: [
+                    TrackCandidate(side: nil, number: 1, title: "One"),
+                    TrackCandidate(side: nil, number: 2, title: "Two"),
+                    TrackCandidate(side: nil, number: 3, title: "Three"),
+                    TrackCandidate(side: nil, number: 4, title: "Four"),
+                ]
+            )
+
+            let draft = RecordDraft(candidate: candidate)
+
+            #expect(draft.tracks.map(\.side) == [.a, .a, .b, .b])
+            #expect(draft.tracks.map(\.number) == [1, 2, 1, 2])
+        }
+
+        @MainActor
+        @Test func knownBackfillAddsThrillerSidesWithoutCatalogLookup() async throws {
+            let store = try freshStore()
+            let record = Record(
+                artist: "Michael Jackson",
+                title: "Thriller",
+                releaseYear: 2016,
+                label: "MJJ Productions",
+                format: "12\" Vinyl",
+                pressingDescription: "XE · 12\" Vinyl",
+                artSeed: 77,
+                storageLocation: "Shelf"
+            )
+            store.context.insert(record)
+
+            await TrackListBackfill().backfill(
+                record: record,
+                lookup: FailingReleaseLookup(),
+                modelContext: store.context
+            )
+
+            #expect(record.tracksSideA.map(\.title) == [
+                "Wanna Be Startin’ Somethin’",
+                "Baby Be Mine",
+                "The Girl Is Mine",
+                "Thriller",
+            ])
+            #expect(record.tracksSideB.map(\.title) == [
+                "Beat It",
+                "Billie Jean",
+                "Human Nature",
+                "P.Y.T. (Pretty Young Thing)",
+                "The Lady in My Life",
+            ])
+        }
+
+        @MainActor
+        @Test func knownBackfillLeavesUserEditedTrackListsAlone() async throws {
+            let store = try freshStore()
+            let record = Record(
+                artist: "Khruangbin",
+                title: "Con todo el mundo",
+                releaseYear: 2018,
+                label: "Dead Oceans",
+                pressingDescription: "Digital Media",
+                artSeed: 78,
+                storageLocation: "Shelf"
+            )
+            record.tracks = [
+                Track(side: .a, trackNumber: 1, title: "My custom track", duration: 10),
+            ]
+            store.context.insert(record)
+
+            await TrackListBackfill().backfill(
+                record: record,
+                lookup: FailingReleaseLookup(),
+                modelContext: store.context
+            )
+
+            #expect(record.tracks.count == 1)
+            #expect(record.tracks.first?.title == "My custom track")
         }
 
         @MainActor
@@ -767,6 +871,20 @@ private struct StubReleaseLookupService: ReleaseLookupService {
     }
 }
 
+private struct FailingReleaseLookup: ReleaseLookupService {
+    func search(text: String) async throws -> [ReleaseCandidate] {
+        throw ReleaseLookupError.notFound
+    }
+
+    func search(barcode: String) async throws -> [ReleaseCandidate] {
+        throw ReleaseLookupError.notFound
+    }
+
+    func details(for candidate: ReleaseCandidate) async throws -> ReleaseCandidate {
+        throw ReleaseLookupError.notFound
+    }
+}
+
 private struct StubArtworkCandidateLookupService: ReleaseLookupService, CoverArtCandidateLookupService {
     var searchCandidates: [ReleaseCandidate]
     var artworkCandidates: [ReleaseCandidate]
@@ -994,6 +1112,24 @@ extension InnerSleeveSerializedTests {
         #expect(sorted.last?.title == "Never")
     }
 
+    @Test func sideBTrackHelpersUseSideLocalOrderAndCatalogRange() {
+        let record = Record(
+            artist: "Test Artist", title: "Two Sides", releaseYear: 2026,
+            label: "Test Label", pressingDescription: "Test pressing",
+            artSeed: 1, storageLocation: "Test"
+        )
+        record.tracks = [
+            Track(side: .b, trackNumber: 2, title: "B2", duration: 120),
+            Track(side: .a, trackNumber: 2, title: "A2", duration: 120),
+            Track(side: .b, trackNumber: 1, title: "B1", duration: 120),
+            Track(side: .a, trackNumber: 1, title: "A1", duration: 120),
+            Track(side: .b, trackNumber: 3, title: "B3", duration: 120),
+        ]
+
+        #expect(record.tracks(on: .b).map(\.title) == ["B1", "B2", "B3"])
+        #expect(record.catalogTrackRange(for: .b) == 2..<5)
+    }
+
     @Test func trackDurationsFormatAsMinutesSeconds() {
         let track = Track(side: .a, trackNumber: 1, title: "T", duration: 254)
         #expect(track.formattedDuration == "4:14")
@@ -1160,6 +1296,53 @@ extension InnerSleeveSerializedTests {
             #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(progress: 0.5, trackCount: 1) == 0)
             #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(progress: 1, trackCount: 1) == 0)
         }
+
+        @Test func seekSecondsLandsInsideTheCuedTrack() {
+            // Total 300s; progress 0.5 targets 150s, which is 30s into track 3.
+            let durations = [60, 60, 180]
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: durations) == 30)
+            #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(progress: 0.5, trackDurations: durations) == 2)
+        }
+
+        @Test func seekSecondsIsZeroAtTheOuterGroove() {
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0, trackDurations: [60, 60, 180]) == 0)
+        }
+
+        @Test func seekSecondsSnapsNearTrackStartsToZero() {
+            // Progress 0.502 of [200, 200] lands 0.8s into track 2: clean start.
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.502, trackDurations: [200, 200]) == 0)
+        }
+
+        @Test func seekSecondsClampsInsideTheLastTrack() {
+            let offset = AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 1, trackDurations: [60, 60])
+            #expect(offset <= 59)
+            #expect(offset >= 0)
+        }
+
+        @Test func seekSecondsFallsBackToZeroForMissingDurations() {
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: []) == 0)
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(progress: 0.5, trackDurations: [60, 0, 120]) == 0)
+        }
+
+        @Test func sideLocalCueAndSeekIgnoreDurationsOnTheOtherSide() {
+            let sideADurations = [900, 300]
+            let sideBDurations = [60, 180]
+
+            #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(
+                progress: 0.5,
+                trackDurations: sideBDurations
+            ) == 1)
+            #expect(AppleMusicDeckPlayer.stylusCueSeekSeconds(
+                progress: 0.5,
+                trackDurations: sideBDurations
+            ) == 60)
+
+            // Including Side A would incorrectly land 720 seconds into A1.
+            #expect(AppleMusicDeckPlayer.stylusCueTrackIndex(
+                progress: 0.5,
+                trackDurations: sideADurations + sideBDurations
+            ) == 0)
+        }
     }
 }
 
@@ -1202,6 +1385,118 @@ extension InnerSleeveSerializedTests {
             )
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: "Midnights", trackTitle: nil) == "Midnights")
             #expect(AppleMusicDeckPlayer.deckTickerText(albumTitle: nil, trackTitle: nil) == "No record on deck")
+            #expect(
+                AppleMusicDeckPlayer.deckTickerText(
+                    albumTitle: "Thriller",
+                    trackTitle: "Beat It",
+                    side: .b
+                ) == "SIDE B  •  Thriller  •  Beat It"
+            )
+        }
+
+        @Test func appleMusicTrackMappingUsesNormalizedLocalTitle() {
+            let index = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Como me quieres",
+                requestedIndex: 4,
+                appleMusicTrackTitles: [
+                    "Cómo me quieres",
+                    "Lady and Man",
+                    "María también",
+                ]
+            )
+
+            #expect(index == 0)
+        }
+
+        @Test func appleMusicTrackMappingFallsBackToRequestedIndex() {
+            let index = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Not on this album",
+                requestedIndex: 2,
+                appleMusicTrackTitles: [
+                    "Beat It",
+                    "Billie Jean",
+                    "Human Nature",
+                ]
+            )
+
+            #expect(index == 2)
+        }
+
+        @Test func sideBTrackMappingIgnoresDuplicateTitlesOnSideA() {
+            let index = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Intro",
+                requestedSideIndex: 0,
+                catalogTrackRange: 2..<4,
+                appleMusicTrackTitles: [
+                    "Intro",
+                    "Side A Closer",
+                    "Intro",
+                    "Side B Closer",
+                ]
+            )
+
+            #expect(index == 2)
+        }
+
+        @Test func sideBTrackMappingFallbackClampsWithinSideB() {
+            let titles = ["A1", "A2", "B1", "B2", "B3"]
+
+            let beforeSide = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Missing",
+                requestedSideIndex: -20,
+                catalogTrackRange: 2..<5,
+                appleMusicTrackTitles: titles
+            )
+            let afterSide = AppleMusicDeckPlayer.mappedCatalogTrackIndex(
+                localTrackTitle: "Missing",
+                requestedSideIndex: 20,
+                catalogTrackRange: 2..<5,
+                appleMusicTrackTitles: titles
+            )
+
+            #expect(beforeSide == 2)
+            #expect(afterSide == 4)
+        }
+
+        @Test func catalogTrackRangeClampsToAlbumBounds() {
+            #expect(AppleMusicDeckPlayer.clampedCatalogTrackRange((-2)..<3, trackCount: 5) == (0..<3))
+            #expect(AppleMusicDeckPlayer.clampedCatalogTrackRange(3..<99, trackCount: 5) == (3..<5))
+            #expect(AppleMusicDeckPlayer.clampedCatalogTrackRange(8..<10, trackCount: 5) == (5..<5))
+        }
+
+        @Test func catalogSideRangeUsesTitleAnchorsWhenEditionsDiffer() {
+            let bonusTrackRange = AppleMusicDeckPlayer.resolvedCatalogTrackRange(
+                suggestedRange: 2..<4,
+                localSideTrackTitles: ["B1", "B2"],
+                appleMusicTrackTitles: ["A1", "A bonus", "A2", "B1", "B2"]
+            )
+            let omittedTrackRange = AppleMusicDeckPlayer.resolvedCatalogTrackRange(
+                suggestedRange: 3..<5,
+                localSideTrackTitles: ["B1", "B2"],
+                appleMusicTrackTitles: ["A1", "A2", "B1", "B2"]
+            )
+
+            #expect(bonusTrackRange == 3..<5)
+            #expect(omittedTrackRange == 2..<4)
+        }
+
+        @Test func playbackRequestGateRejectsStoppedAndSupersededWork() {
+            var gate = PlaybackRequestGate()
+            let first = gate.begin()
+            let second = gate.begin()
+
+            #expect(!gate.isCurrent(first))
+            #expect(gate.isCurrent(second))
+            #expect(gate.completionDisposition(for: first) == .discard)
+            #expect(gate.completionDisposition(for: second) == .publish)
+
+            gate.invalidate()
+            #expect(!gate.isCurrent(second))
+            #expect(gate.completionDisposition(for: second) == .stopPlayer)
+
+            let freshCue = gate.begin()
+            #expect(gate.completionDisposition(for: second) == .discard)
+            #expect(gate.completionDisposition(for: freshCue) == .publish)
         }
     }
 }
@@ -1366,6 +1661,161 @@ extension InnerSleeveSerializedTests {
             #expect(TonearmPlaybackMotion.verticalOffset(playbackTime: 37.25, isPlaying: true) == first.verticalOffset)
             #expect(TonearmPlaybackMotion.headshellRotationDegrees(playbackTime: 37.25, isPlaying: true) == first.headshellRotationDegrees)
         }
+
+        // MARK: Direct-manipulation geometry
+
+        @Test func tipPointAtOuterGrooveMatchesRestTipOffset() {
+            let tip = TonearmMath.tipPoint(angle: 0, deckCenter: .zero)
+
+            #expect(abs(tip.x - TonearmMath.restTipOffset.dx) < 0.001)
+            #expect(abs(tip.y - TonearmMath.restTipOffset.dy) < 0.001)
+        }
+
+        @Test func tipStaysAtConstantRadiusFromPivotAcrossSweep() {
+            let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
+            let restRadius = hypot(
+                TonearmMath.restTipOffset.dx - TonearmMath.pivotOffset.dx,
+                TonearmMath.restTipOffset.dy - TonearmMath.pivotOffset.dy
+            )
+            for angle in stride(from: -16.0, through: 14.0, by: 2.0) {
+                let tip = TonearmMath.tipPoint(angle: angle, deckCenter: .zero)
+                let radius = hypot(tip.x - pivot.x, tip.y - pivot.y)
+                #expect(abs(radius - restRadius) < 0.001)
+            }
+        }
+
+        @Test func fingerAngleMeasuresPolarAngleFromPivot() {
+            let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
+            let right = CGPoint(x: pivot.x + 100, y: pivot.y)
+            let below = CGPoint(x: pivot.x, y: pivot.y + 100)
+
+            #expect(abs(TonearmMath.fingerAngle(at: right, deckCenter: .zero)) < 0.001)
+            #expect(abs(TonearmMath.fingerAngle(at: below, deckCenter: .zero) - 90) < 0.001)
+        }
+
+        @Test func normalizedDeltaWrapsIntoHalfTurnRange() {
+            #expect(TonearmMath.normalizedDeltaDegrees(0) == 0)
+            #expect(TonearmMath.normalizedDeltaDegrees(190) == -170)
+            #expect(TonearmMath.normalizedDeltaDegrees(-190) == 170)
+            #expect(TonearmMath.normalizedDeltaDegrees(180) == 180)
+            #expect(TonearmMath.normalizedDeltaDegrees(-180) == 180)
+            #expect(TonearmMath.normalizedDeltaDegrees(540) == 180)
+        }
+
+        @Test func draggingTheTipSwingsTheArmOneToOne() {
+            let start = TonearmMath.tipPoint(angle: -16, deckCenter: .zero)
+            let target = TonearmMath.tipPoint(angle: 7, deckCenter: .zero)
+
+            let angle = TonearmMath.draggedAngle(
+                startArmAngle: -16,
+                startLocation: start,
+                currentLocation: target,
+                deckCenter: .zero
+            )
+
+            #expect(abs(angle - 7) < 0.001)
+        }
+
+        @Test func draggingBeyondTheGroovesClampsToPhysicalRange() {
+            let start = TonearmMath.tipPoint(angle: 0, deckCenter: .zero)
+            let farInward = TonearmMath.tipPoint(angle: 40, deckCenter: .zero)
+            let farOutward = TonearmMath.tipPoint(angle: -60, deckCenter: .zero)
+
+            let inward = TonearmMath.draggedAngle(
+                startArmAngle: 0,
+                startLocation: start,
+                currentLocation: farInward,
+                deckCenter: .zero
+            )
+            let outward = TonearmMath.draggedAngle(
+                startArmAngle: 0,
+                startLocation: start,
+                currentLocation: farOutward,
+                deckCenter: .zero
+            )
+
+            #expect(inward == TonearmMath.innerGrooveAngle)
+            #expect(outward == TonearmMath.restAngle)
+        }
+
+        // MARK: Groove donut
+
+        @Test func stylusRadiusDecreasesMonotonicallyAcrossTheSweep() {
+            var previous = Double.infinity
+            for angle in stride(from: -16.0, through: 14.0, by: 0.5) {
+                let radius = TonearmMath.stylusRadius(at: angle)
+                #expect(radius < previous)
+                previous = radius
+            }
+        }
+
+        @Test func grooveProgressIsNilOffTheRecordAndOverTheLabel() {
+            // Rest: stylus is outside the record edge.
+            #expect(TonearmMath.stylusRadius(at: TonearmMath.restAngle) > TonearmMath.recordEdgeRadius)
+            #expect(TonearmMath.grooveProgress(at: TonearmMath.restAngle) == nil)
+            // Fully swung in: stylus is over the label sticker.
+            #expect(TonearmMath.isOverLabel(at: TonearmMath.innerGrooveAngle))
+            #expect(TonearmMath.grooveProgress(at: TonearmMath.innerGrooveAngle) == nil)
+        }
+
+        @Test func grooveProgressSpansZeroToOneAcrossThePlayableBand() {
+            let outerAngle = TonearmMath.angle(forGrooveProgress: 0)
+            let innerAngle = TonearmMath.angle(forGrooveProgress: 1)
+
+            #expect(abs((TonearmMath.grooveProgress(at: outerAngle) ?? -1) - 0) < 0.01)
+            #expect(abs((TonearmMath.grooveProgress(at: innerAngle) ?? -1) - 1) < 0.01)
+            #expect(outerAngle < innerAngle)
+        }
+
+        @Test func grooveProgressIsMonotonicWithinTheBand() {
+            let outerAngle = TonearmMath.angle(forGrooveProgress: 0)
+            let innerAngle = TonearmMath.angle(forGrooveProgress: 1)
+            var previous = -1.0
+            for angle in stride(from: outerAngle + 0.01, through: innerAngle - 0.01, by: 0.25) {
+                guard let progress = TonearmMath.grooveProgress(at: angle) else {
+                    Issue.record("expected playable groove at \(angle)")
+                    return
+                }
+                #expect(progress > previous)
+                previous = progress
+            }
+        }
+
+        @Test func angleForGrooveProgressRoundTrips() {
+            for progress in stride(from: 0.0, through: 1.0, by: 0.1) {
+                let angle = TonearmMath.angle(forGrooveProgress: progress)
+                let recovered = TonearmMath.grooveProgress(at: angle)
+                #expect(recovered != nil)
+                #expect(abs((recovered ?? -1) - progress) < 0.01)
+            }
+        }
+
+        @Test func leadInEdgeStillCountsAsTrackOne() {
+            // Dropping between the record edge and the first groove snaps
+            // to progress 0 rather than rejecting the drop.
+            let outerAngle = TonearmMath.angle(forGrooveProgress: 0)
+            let leadInAngle = outerAngle - 0.8
+            if TonearmMath.stylusRadius(at: leadInAngle) <= TonearmMath.recordEdgeRadius {
+                #expect(TonearmMath.grooveProgress(at: leadInAngle) == 0)
+            }
+        }
+
+        @Test func grabbingMidArmTracksTheSameAngularDelta() {
+            let pivot = TonearmMath.pivotPoint(deckCenter: .zero)
+            func midArm(_ angle: Double) -> CGPoint {
+                let tip = TonearmMath.tipPoint(angle: angle, deckCenter: .zero)
+                return CGPoint(x: pivot.x + (tip.x - pivot.x) / 2, y: pivot.y + (tip.y - pivot.y) / 2)
+            }
+
+            let angle = TonearmMath.draggedAngle(
+                startArmAngle: 0,
+                startLocation: midArm(0),
+                currentLocation: midArm(10),
+                deckCenter: .zero
+            )
+
+            #expect(abs(angle - 10) < 0.001)
+        }
     }
 }
 
@@ -1410,6 +1860,61 @@ extension InnerSleeveSerializedTests {
             #expect(record.resolvedVinylSeed == 42)
         }
 
+        @Test func everyVinylStyleHasAUsableCuratedPalette() {
+            let palettes = VinylStyle.allCases.map { style in
+                let colors = Record.defaultVinylColors(for: style)
+                #expect(Color(hex: colors.primary) != nil)
+                #expect(Color(hex: colors.secondary) != nil)
+                #expect(!style.displayName.isEmpty)
+                #expect(!style.materialDescription.isEmpty)
+                return "\(colors.primary)|\(colors.secondary)"
+            }
+
+            #expect(Set(palettes).count == VinylStyle.allCases.count)
+        }
+
+        @Test func selectingAStyleAdoptsItsPaletteWhenCurrentColorsAreDefaults() {
+            let black = Record.defaultVinylColors(for: .black)
+            let starting = VinylLookValues(
+                style: .black,
+                primaryHex: black.primary,
+                secondaryHex: black.secondary,
+                seed: 19
+            )
+
+            let updated = VinylPaletteTransition.selecting(
+                .burst,
+                from: starting,
+                legacyAppearance: .black
+            )
+            let burst = Record.defaultVinylColors(for: .burst)
+
+            #expect(updated.style == .burst)
+            #expect(updated.primaryHex == burst.primary)
+            #expect(updated.secondaryHex == burst.secondary)
+            #expect(updated.seed == starting.seed)
+        }
+
+        @Test func selectingAStylePreservesCustomizedPigments() {
+            let starting = VinylLookValues(
+                style: .marble,
+                primaryHex: "#123456",
+                secondaryHex: "#ABCDEF",
+                seed: 77
+            )
+
+            let updated = VinylPaletteTransition.selecting(
+                .swirl,
+                from: starting,
+                legacyAppearance: .black
+            )
+
+            #expect(updated.style == .swirl)
+            #expect(updated.primaryHex == starting.primaryHex)
+            #expect(updated.secondaryHex == starting.secondaryHex)
+            #expect(updated.seed == starting.seed)
+        }
+
         @Test func patternGeometryIsDeterministicForSameSeed() {
             let first = VinylPatternGeometry.blobs(seed: 1234, count: 12)
             let second = VinylPatternGeometry.blobs(seed: 1234, count: 12)
@@ -1424,6 +1929,34 @@ extension InnerSleeveSerializedTests {
             let second = VinylPatternGeometry.rays(seed: 88, count: 10)
 
             #expect(first == second)
+        }
+
+        @Test func everyProceduralVinylStyleHasDeterministicSeededGeometry() {
+            for style in VinylStyle.allCases where style != .black {
+                let first = VinylPatternGeometry.signature(style: style, seed: 812, size: 260)
+                let second = VinylPatternGeometry.signature(style: style, seed: 812, size: 260)
+                let shuffled = VinylPatternGeometry.signature(style: style, seed: 813, size: 260)
+
+                #expect(first == second, "\(style.displayName) should be stable for a saved seed")
+                #expect(first != shuffled, "\(style.displayName) should visibly change after shuffle")
+                #expect(first.componentCount > 0)
+            }
+        }
+
+        @Test func vinylThumbnailGeometryIsCheaperThanHeroGeometry() {
+            for style in VinylStyle.allCases where style != .black {
+                let thumbnail = VinylPatternGeometry.signature(style: style, seed: 92, size: 56)
+                let hero = VinylPatternGeometry.signature(style: style, seed: 92, size: 260)
+
+                #expect(
+                    thumbnail.definingSamples == hero.definingSamples,
+                    "\(style.displayName) should preserve its defining geometry across render sizes"
+                )
+                #expect(
+                    thumbnail.componentCount < hero.componentCount,
+                    "\(style.displayName) should reduce detail in style-picker thumbnails"
+                )
+            }
         }
     }
 }

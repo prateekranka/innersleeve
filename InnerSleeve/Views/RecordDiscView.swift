@@ -40,7 +40,11 @@ struct RecordDiscView: View {
                     seed: vinylSeed ?? artSeed,
                     size: size
                 )
-                grooves(size: size)
+                // Concentric groove rings read as black lines on colored pressings;
+                // keep them only on Classic Black.
+                if resolvedStyle == .black {
+                    grooves(size: size)
+                }
                 iridescence(size: size, light: light)
                 gloss(size: size, light: light)
                 label(size: size)
@@ -228,258 +232,28 @@ extension RecordDiscView {
     }
 }
 
-struct VinylBlob: Equatable {
-    var angle: Double
-    var distance: Double
-    var radius: Double
-    var opacity: Double
-}
-
-struct VinylRay: Equatable {
-    var startAngle: Double
-    var width: Double
-    var opacity: Double
-}
-
-enum VinylPatternGeometry {
-    static func blobs(seed: Int, count: Int) -> [VinylBlob] {
-        var rng = SeededRandom(seed: seed &+ 991)
-        return (0..<count).map { _ in
-            VinylBlob(
-                angle: rng.double(in: 0...(2 * .pi)),
-                distance: rng.double(in: 0.16...0.98),
-                radius: rng.double(in: 0.008...0.034),
-                opacity: rng.double(in: 0.38...0.86)
-            )
-        }
-    }
-
-    static func rays(seed: Int, count: Int) -> [VinylRay] {
-        var rng = SeededRandom(seed: seed &+ 311)
-        let step = (2 * .pi) / Double(max(count, 1))
-        return (0..<count).map { index in
-            VinylRay(
-                startAngle: Double(index) * step + rng.double(in: -0.08...0.08),
-                width: rng.double(in: step * 0.38...step * 0.72),
-                opacity: rng.double(in: 0.35...0.72)
-            )
-        }
-    }
-}
-
-struct VinylSurfaceView: View {
-    var style: VinylStyle
-    var primary: Color
-    var secondary: Color
-    var seed: Int
-    var size: CGFloat
-
-    var body: some View {
-        ZStack {
-            base
-            pattern
-        }
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(Color.black.opacity(0.42), lineWidth: max(0.8, size * 0.006)))
-    }
-
-    private var base: some View {
-        Circle()
-            .fill(
-                RadialGradient(
-                    colors: baseColors,
-                    center: .center,
-                    startRadius: size * 0.05,
-                    endRadius: size * 0.52
+#Preview("Vinyl pressing processes", traits: .sizeThatFitsLayout) {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 18)], spacing: 18) {
+        ForEach(VinylStyle.allCases, id: \.self) { style in
+            let colors = Record.defaultVinylColors(for: style)
+            VStack(spacing: 7) {
+                RecordDiscView(
+                    artSeed: 106,
+                    artStyle: .rings,
+                    initials: "WL",
+                    vinylStyle: style,
+                    vinylPrimaryHex: colors.primary,
+                    vinylSecondaryHex: colors.secondary,
+                    vinylSeed: 106
                 )
-            )
-    }
+                .frame(width: 126, height: 126)
 
-    private var baseColors: [Color] {
-        switch style {
-        case .black:
-            return [Color.white.opacity(0.08), Palette.vinylBlack, Palette.softBlack]
-        case .translucent:
-            return [primary.opacity(0.78), primary.opacity(0.52), secondary.opacity(0.82)]
-        case .smoke:
-            return [primary.opacity(0.82), secondary.opacity(0.95), Palette.vinylBlack]
-        case .marble:
-            return [primary.opacity(0.95), secondary.opacity(0.55), primary.opacity(0.72)]
-        default:
-            return [primary.opacity(0.94), Palette.vinylBlack.opacity(0.9), secondary.opacity(0.86)]
-        }
-    }
-
-    @ViewBuilder
-    private var pattern: some View {
-        switch style {
-        case .black:
-            EmptyView()
-        case .translucent:
-            translucentVeil
-        case .swirl:
-            swirlCanvas
-        case .marble:
-            marbleCanvas
-        case .pinwheel:
-            rayCanvas(rayCount: 12, innerCutout: 0.15)
-        case .burst:
-            rayCanvas(rayCount: 28, innerCutout: 0.08)
-        case .halo:
-            halo
-        case .splatterMix:
-            splatterCanvas
-        case .smoke:
-            smokeCanvas
-        }
-    }
-
-    private var translucentVeil: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: size * 0.12)
-                .blur(radius: size * 0.02)
-            Circle()
-                .fill(primary.opacity(0.14))
-                .padding(size * 0.08)
-        }
-    }
-
-    private var halo: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(secondary.opacity(0.54), lineWidth: size * 0.16)
-                .padding(size * 0.12)
-                .blur(radius: size * 0.012)
-            Circle()
-                .strokeBorder(primary.opacity(0.22), lineWidth: size * 0.08)
-                .padding(size * 0.29)
-        }
-    }
-
-    private var swirlCanvas: some View {
-        Canvas { context, canvasSize in
-            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-            let outer = canvasSize.width * 0.54
-            for index in 0..<7 {
-                var path = Path()
-                let offset = Double(index) * 0.9 + Double(seed % 19) * 0.03
-                for step in 0...160 {
-                    let t = Double(step) / 160.0
-                    let angle = offset + t * 5.9
-                    let radius = outer * CGFloat(0.12 + t * 0.84)
-                    let point = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
-                    if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
-                }
-                context.stroke(path, with: .color((index.isMultiple(of: 2) ? secondary : primary).opacity(0.34)), lineWidth: size * 0.07)
+                Text(style.displayName)
+                    .font(.caption.weight(.semibold))
             }
         }
     }
-
-    private var marbleCanvas: some View {
-        Canvas { context, canvasSize in
-            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-            let outer = canvasSize.width * 0.47
-            let blobs = VinylPatternGeometry.blobs(seed: seed, count: 18)
-            for (index, blob) in blobs.enumerated() {
-                let x = center.x + cos(blob.angle) * outer * blob.distance
-                let y = center.y + sin(blob.angle) * outer * blob.distance
-                let radius = outer * CGFloat(blob.radius * 4.8)
-                let rect = CGRect(x: x - radius, y: y - radius * 0.45, width: radius * 2.4, height: radius * 0.9)
-                let path = Path(ellipseIn: rect)
-                context.fill(path, with: .color((index.isMultiple(of: 2) ? secondary : Color.black).opacity(blob.opacity * 0.22)))
-            }
-        }
-        .blur(radius: size * 0.01)
-    }
-
-    private func rayCanvas(rayCount: Int, innerCutout: CGFloat) -> some View {
-        Canvas { context, canvasSize in
-            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-            let outer = canvasSize.width * 0.55
-            let inner = canvasSize.width * innerCutout
-            for (index, ray) in VinylPatternGeometry.rays(seed: seed, count: rayCount).enumerated() {
-                var path = Path()
-                path.move(to: CGPoint(
-                    x: center.x + cos(ray.startAngle) * inner,
-                    y: center.y + sin(ray.startAngle) * inner
-                ))
-                path.addLine(to: CGPoint(
-                    x: center.x + cos(ray.startAngle) * outer,
-                    y: center.y + sin(ray.startAngle) * outer
-                ))
-                path.addArc(
-                    center: center,
-                    radius: outer,
-                    startAngle: .radians(ray.startAngle),
-                    endAngle: .radians(ray.startAngle + ray.width),
-                    clockwise: false
-                )
-                path.addLine(to: CGPoint(
-                    x: center.x + cos(ray.startAngle + ray.width) * inner,
-                    y: center.y + sin(ray.startAngle + ray.width) * inner
-                ))
-                path.addArc(
-                    center: center,
-                    radius: inner,
-                    startAngle: .radians(ray.startAngle + ray.width),
-                    endAngle: .radians(ray.startAngle),
-                    clockwise: true
-                )
-                context.fill(path, with: .color((index.isMultiple(of: 2) ? secondary : primary).opacity(ray.opacity)))
-            }
-        }
-    }
-
-    private var splatterCanvas: some View {
-        Canvas { context, canvasSize in
-            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-            let outer = canvasSize.width * 0.47
-            for (index, blob) in VinylPatternGeometry.blobs(seed: seed, count: 78).enumerated() {
-                let radius = canvasSize.width * CGFloat(blob.radius)
-                let x = center.x + cos(blob.angle) * outer * blob.distance
-                let y = center.y + sin(blob.angle) * outer * blob.distance
-                context.fill(
-                    Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
-                    with: .color((index.isMultiple(of: 3) ? Palette.warmYellow : secondary).opacity(blob.opacity))
-                )
-            }
-        }
-    }
-
-    private var smokeCanvas: some View {
-        Canvas { context, canvasSize in
-            let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-            let outer = canvasSize.width * 0.46
-            for (index, blob) in VinylPatternGeometry.blobs(seed: seed &+ 17, count: 24).enumerated() {
-                let radius = outer * CGFloat(blob.radius * 5.2)
-                let x = center.x + cos(blob.angle) * outer * blob.distance * 0.9
-                let y = center.y + sin(blob.angle) * outer * blob.distance * 0.9
-                context.fill(
-                    Path(ellipseIn: CGRect(x: x - radius, y: y - radius * 0.55, width: radius * 2.4, height: radius * 1.1)),
-                    with: .color((index.isMultiple(of: 2) ? Color.white : primary).opacity(blob.opacity * 0.18))
-                )
-            }
-        }
-        .blur(radius: size * 0.018)
-    }
-}
-
-#Preview("Vinyl appearances", traits: .sizeThatFitsLayout) {
-    VStack(spacing: 20) {
-        HStack(spacing: 20) {
-            RecordDiscView(artSeed: 101, artStyle: .rings, initials: "GM")
-                .frame(width: 160)
-            RecordDiscView(artSeed: 110, artStyle: .beam, initials: "AS", vinylStyle: .translucent)
-                .frame(width: 160)
-        }
-        HStack(spacing: 20) {
-            RecordDiscView(artSeed: 106, artStyle: .rings, initials: "FE", vinylStyle: .splatterMix)
-                .frame(width: 160)
-            RecordDiscView(artSeed: 109, artStyle: .missing, initials: "MT", titleText: "Ashline", vinylStyle: .swirl)
-                .frame(width: 160)
-        }
-    }
-    .padding(30)
+    .padding(24)
+    .frame(width: 460)
     .background(Palette.stageGrey)
 }

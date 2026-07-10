@@ -10,11 +10,14 @@ Design source of truth: `~/Documents/Codex/2026-07-02/i/outputs/vinyl-reference-
 - **Shelf** (first screen) — draggable 3D depth carousel of records. Hero record at
   center; neighbors recede in scale, rotation, opacity, and blur. Tap the hero to open
   Record Detail. Metadata (title, artist, pressing, condition, last played) sits small
-  beneath the object.
+  beneath the object. A toggle switches to the **display shelf**: a listening-room wall
+  of covers on picture ledges with a tripod floor lamp (tap to light the room) and a
+  credenza holding a turntable and crates of records.
 - **Deck** — fixed product-rendered turntable. Drag vertically to stream records through
-  the platter; the current record snaps on, spins slowly, and the white tonearm lifts
-  while you drag. Tap the amber display to cycle readouts (pressing, condition, last
-  played, tracks). "Log play" records a listen.
+  the platter. The tonearm is the primary control: pick the stylus up and place it on
+  any part of the record to play from that portion, or drag it back to the arm rest to
+  lift the needle — the platter keeps spinning until the deck's stop button is pressed.
+  "Log play" records a listen.
 - **Wanted** — the wishlist in the same carousel language: ghost records with dashed
   rings, a price tag on the hero, target pressing, priority, and shop links.
 
