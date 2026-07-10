@@ -40,7 +40,11 @@ struct RecordDiscView: View {
                     seed: vinylSeed ?? artSeed,
                     size: size
                 )
-                grooves(size: size)
+                // Concentric groove rings read as black lines on colored pressings;
+                // keep them only on Classic Black.
+                if resolvedStyle == .black {
+                    grooves(size: size)
+                }
                 iridescence(size: size, light: light)
                 gloss(size: size, light: light)
                 label(size: size)
